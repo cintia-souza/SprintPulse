@@ -126,6 +126,9 @@ export default function RetroBoard({
   });
   const [joinError, setJoinError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [migrateModal, setMigrateModal] = useState<{ open: boolean; cardId: string }>({ open: false, cardId: "" });
+  const [migrateTarget, setMigrateTarget] = useState("");
+  const [availableSessions, setAvailableSessions] = useState<{ roomId: string; squad: string; createdAt: string; phase: string }[]>([]);
   const prevPhase = useRef<Phase>("writing");
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
@@ -182,6 +185,26 @@ export default function RetroBoard({
       return;
     }
     setJoined(true);
+  };
+
+  const openMigrateModal = async (cardId: string) => {
+    setMigrateModal({ open: true, cardId });
+    setMigrateTarget("");
+    try {
+      const res = await fetch("/api/retro/sessions");
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableSessions(
+          (data.sessions || []).filter((s: { roomId: string }) => s.roomId !== roomId)
+        );
+      }
+    } catch {}
+  };
+
+  const confirmMigrate = () => {
+    if (!migrateTarget.trim()) return;
+    sendAction({ action: "migrate-action", cardId: migrateModal.cardId, targetRoomId: migrateTarget.trim() });
+    setMigrateModal({ open: false, cardId: "" });
   };
 
   const addCard = (column: CardColumn) => {
@@ -599,12 +622,7 @@ export default function RetroBoard({
                   {/* Migrate button */}
                   {isHost && !card.completed && !card.migratedTo && (
                     <button
-                      onClick={() => {
-                        const target = prompt("ID da próxima sala de retro (cole o ID da URL):");
-                        if (target?.trim()) {
-                          sendAction({ action: "migrate-action", cardId: card.id, targetRoomId: target.trim() });
-                        }
-                      }}
+                      onClick={() => openMigrateModal(card.id)}
                       className="text-[10px] bg-purple-400/10 border border-purple-400/30 text-purple-400 px-2 py-1 rounded-md font-mono hover:bg-purple-400/20 transition-all"
                     >
                       ↪ Migrar
@@ -614,6 +632,105 @@ export default function RetroBoard({
               ))}
           </div>
         </section>
+      )}
+
+      {/* === MODAL MIGRAR AÇÃO === */}
+      {migrateModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => setMigrateModal({ open: false, cardId: "" })}
+          />
+          {/* Modal */}
+          <div className="relative w-full max-w-md bg-slate-900 border border-purple-400/30 rounded-2xl p-6 space-y-5 shadow-2xl shadow-purple-400/10 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-purple-400 font-mono">
+                ↪ Migrar Ação
+              </h3>
+              <button
+                onClick={() => setMigrateModal({ open: false, cardId: "" })}
+                className="text-slate-500 hover:text-slate-300 transition-colors text-xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Selecione uma sprint existente ou crie uma nova para migrar esta ação.
+            </p>
+
+            {/* Lista de sprints disponíveis */}
+            {availableSessions.length > 0 && (
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                <p className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Sprints disponíveis</p>
+                {availableSessions.map((s) => (
+                  <button
+                    key={s.roomId}
+                    onClick={() => setMigrateTarget(s.roomId)}
+                    className={`w-full flex items-center justify-between p-3 rounded-lg border text-left transition-all ${
+                      migrateTarget === s.roomId
+                        ? "border-purple-400 bg-purple-400/10"
+                        : "border-slate-700 bg-slate-800/80 hover:border-slate-500"
+                    }`}
+                  >
+                    <div>
+                      <span className="text-sm text-slate-200 font-mono">
+                        {s.roomId.length > 16 ? s.roomId.slice(0, 16) + "..." : s.roomId}
+                      </span>
+                      {s.squad !== "default" && (
+                        <span className="ml-2 text-[10px] bg-emerald-400/10 border border-emerald-400/30 text-emerald-400 px-1.5 py-0.5 rounded-full">
+                          {s.squad}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {new Date(s.createdAt).toLocaleDateString("pt-BR")}
+                      </span>
+                      <span className={`w-2 h-2 rounded-full ${
+                        s.phase === "done" ? "bg-emerald-400" : "bg-amber-400 animate-pulse"
+                      }`} />
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Separador */}
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-slate-700" />
+              <span className="text-[10px] text-slate-500 uppercase">ou</span>
+              <div className="flex-1 h-px bg-slate-700" />
+            </div>
+
+            {/* Input manual */}
+            <input
+              type="text"
+              value={migrateTarget}
+              onChange={(e) => setMigrateTarget(e.target.value)}
+              placeholder="Cole o ID da nova sprint..."
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-400/50 font-mono text-sm"
+            />
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setMigrateModal({ open: false, cardId: "" })}
+                className="flex-1 px-4 py-2.5 border border-slate-700 text-slate-400 rounded-lg hover:bg-slate-800 transition-all text-sm font-medium"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmMigrate}
+                disabled={!migrateTarget.trim()}
+                className="flex-1 px-4 py-2.5 bg-purple-400/10 border border-purple-400/50 text-purple-400 font-semibold rounded-lg hover:bg-purple-400/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all text-sm"
+              >
+                ↪ Migrar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* === PLAYERS ONLINE === */}
