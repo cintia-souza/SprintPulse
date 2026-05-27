@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -12,17 +12,68 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "SprintPulse",
-  description: "BytePoker & PingBack — Votação e Retrospectiva em tempo real",
-  icons: { icon: "/icon.svg" },
-  manifest: "/manifest.json",
+const BASE_URL = process.env.NEXT_PUBLIC_URL || "https://sprintpulse.vercel.app";
+
+export const viewport: Viewport = {
   themeColor: "#22d3ee",
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "black-translucent",
-    title: "SprintPulse",
+  width: "device-width",
+  initialScale: 1,
+};
+
+export const metadata: Metadata = {
+  title: {
+    default: "SprintPulse — Retrospectiva e Planning Poker em tempo real",
+    template: "%s | SprintPulse",
   },
+  description:
+    "Ferramenta gratuita para retrospectivas ágeis e planning poker. Colabore com seu time em tempo real, vote em cards e acompanhe planos de ação.",
+  keywords: [
+    "retrospectiva",
+    "planning poker",
+    "scrum",
+    "agile",
+    "sprint",
+    "retro",
+    "time real",
+    "colaboração",
+    "squad",
+  ],
+  authors: [{ name: "SprintPulse" }],
+  creator: "SprintPulse",
+  metadataBase: new URL(BASE_URL),
+  openGraph: {
+    type: "website",
+    locale: "pt_BR",
+    url: BASE_URL,
+    siteName: "SprintPulse",
+    title: "SprintPulse — Retrospectiva e Planning Poker em tempo real",
+    description:
+      "Ferramenta gratuita para retrospectivas ágeis e planning poker. Colabore com seu time em tempo real.",
+    images: [
+      {
+        url: "/icon.svg",
+        width: 512,
+        height: 512,
+        alt: "SprintPulse Logo",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: "SprintPulse — Retrospectiva e Planning Poker",
+    description:
+      "Colabore com seu time em tempo real. Retrospectivas e estimativas sem fricção.",
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+    },
+  },
+  icons: { icon: "/icon.svg", apple: "/icon.svg" },
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({

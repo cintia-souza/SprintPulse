@@ -1,21 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRoom, resetRoom, PointValue } from "@/lib/poker-store";
+import { rateLimit } from "@/lib/rate-limit";
+import { sanitize, isValidNickname } from "@/lib/sanitize";
 
-// GET: return current room state
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ip = req.headers.get("x-forwarded-for") || "unknown";
+  if (!rateLimit(ip)) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
   const { id } = await params;
   const room = getRoom(id);
   return NextResponse.json(room);
 }
 
-// POST: handle actions (join, vote, reveal, reset)
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ip = req.headers.get("x-forwarded-for") || "unknown";
+  if (!rateLimit(ip)) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
   const { id } = await params;
   const room = getRoom(id);
   const body = await req.json();
@@ -26,8 +34,14 @@ export async function POST(
         nickname: string;
         role: "host" | "dev";
       };
+      if (!nickname || !isValidNickname(nickname)) {
+        return NextResponse.json({ error: "Nickname inválido" }, { status: 400 });
+      }
+      if (role !== "host" && role !== "dev") {
+        return NextResponse.json({ error: "Role inválido" }, { status: 400 });
+      }
       if (!room.players.find((p) => p.nickname === nickname)) {
-        room.players.push({ nickname, role, vote: null });
+        room.players.push({ nickname: sanitize(nickname, 30), role, vote: null });
       }
       break;
     }

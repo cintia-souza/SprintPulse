@@ -6,6 +6,8 @@ import {
   setRetroRoom,
 } from "@/lib/retro-store";
 import { persistRetro, loadRetroFromDB } from "@/lib/retro-sync";
+import { rateLimit } from "@/lib/rate-limit";
+import { sanitize, isValidNickname } from "@/lib/sanitize";
 
 // Garante que a sala está carregada (do banco ou nova)
 async function ensureRoom(id: string) {
@@ -26,9 +28,13 @@ async function ensureRoom(id: string) {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ip = req.headers.get("x-forwarded-for") || "unknown";
+  if (!rateLimit(ip)) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
   const { id } = await params;
   const room = await ensureRoom(id);
   return NextResponse.json(room);
@@ -38,6 +44,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ip = req.headers.get("x-forwarded-for") || "unknown";
+  if (!rateLimit(ip)) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
   const { id } = await params;
   const room = await ensureRoom(id);
   const body = await req.json();
@@ -45,6 +55,12 @@ export async function POST(
   switch (body.action) {
     case "join": {
       const { nickname, role, squad } = body as { nickname: string; role: "host" | "member"; squad?: string };
+      if (!nickname || !isValidNickname(nickname)) {
+        return NextResponse.json({ error: "Nickname inválido" }, { status: 400 });
+      }
+      if (role !== "host" && role !== "member") {
+        return NextResponse.json({ error: "Role inválido" }, { status: 400 });
+      }
       if (room.players.length === 0 && role !== "host") {
         return NextResponse.json(
           { error: "Somente o Host (PM/TL) pode criar a sala" },
@@ -58,10 +74,10 @@ export async function POST(
         );
       }
       if (squad && room.players.length === 0) {
-        room.squad = squad;
+        room.squad = sanitize(squad, 50);
       }
       if (!room.players.find((p) => p.nickname === nickname)) {
-        room.players.push({ nickname, role, votesRemaining: 5, votedCardIds: [] });
+        room.players.push({ nickname: sanitize(nickname, 30), role, votesRemaining: 5, votedCardIds: [] });
       }
       break;
     }
@@ -72,12 +88,17 @@ export async function POST(
         column: CardColumn;
         content: string;
       };
-      if (content?.trim()) {
+      const validColumns: CardColumn[] = ["WENT_WELL", "IMPROVE", "ACTION_ITEMS"];
+      if (!validColumns.includes(column)) {
+        return NextResponse.json({ error: "Coluna inválida" }, { status: 400 });
+      }
+      const sanitizedContent = sanitize(content, 500);
+      if (sanitizedContent) {
         room.cards.push({
           id: generateCardId(),
           column,
-          content: content.trim(),
-          author: nickname,
+          content: sanitizedContent,
+          author: sanitize(nickname, 30),
           votes: 0,
           completed: false,
           migratedTo: null,

@@ -3,6 +3,16 @@
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: "SprintPulse",
+  description: "Ferramenta gratuita para retrospectivas ágeis e planning poker em tempo real.",
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "Any",
+  offers: { "@type": "Offer", price: "0", priceCurrency: "BRL" },
+};
+
 interface SessionItem {
   id: string;
   roomId: string;
@@ -48,6 +58,12 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center px-4 py-12">
+      {/* JSON-LD Structured Data */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+
       {/* Logo */}
       <div className="text-center mb-10">
         <h1 className="text-4xl md:text-5xl font-bold text-cyan-400 font-mono tracking-tight">
