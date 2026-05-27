@@ -30,6 +30,8 @@ export async function persistRetro(roomId: string, room: RetroRoom) {
         content: card.content,
         author: card.author,
         votes: card.votes,
+        completed: card.completed ?? false,
+        migratedTo: card.migratedTo ?? null,
       })),
     });
   }
@@ -47,13 +49,15 @@ export async function loadRetroFromDB(roomId: string): Promise<RetroRoom | null>
   if (!session) return null;
 
   return {
-    players: [], // Players são efêmeros, não persistidos
+    players: [],
     cards: session.cards.map((c) => ({
       id: c.id,
       column: c.column as CardColumn,
       content: c.content,
       author: c.author,
       votes: c.votes,
+      completed: c.completed,
+      migratedTo: c.migratedTo,
     })),
     revealedColumns: session.revealedColumns as CardColumn[],
     votingOpen: session.phase === "voting",

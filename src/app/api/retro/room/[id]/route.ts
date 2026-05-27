@@ -76,6 +76,8 @@ export async function POST(
           content: content.trim(),
           author: nickname,
           votes: 0,
+          completed: false,
+          migratedTo: null,
         });
       }
       break;
@@ -115,25 +117,56 @@ export async function POST(
     }
 
     case "close-voting": {
-      const allRevealed = room.revealedColumns.includes("WENT_WELL") &&
-        room.revealedColumns.includes("IMPROVE") &&
-        room.revealedColumns.includes("ACTION_ITEMS");
-      if (!allRevealed) {
+      // Regra: precisa ter revelado WENT_WELL e IMPROVE
+      const minRevealed = room.revealedColumns.includes("WENT_WELL") &&
+        room.revealedColumns.includes("IMPROVE");
+      if (!minRevealed) {
         return NextResponse.json(
-          { error: "Revele os 3 pilares antes de encerrar a votação" },
+          { error: "Revele pelo menos os pilares 'O que foi bem' e 'O que pode melhorar' antes de encerrar" },
           { status: 400 }
         );
       }
       room.votingOpen = false;
       room.phase = "done";
-      // Persiste resultado final no Neon
       await persistRetro(id, room);
+      break;
+    }
+
+    case "toggle-action-complete": {
+      const { cardId } = body as { cardId: string };
+      const card = room.cards.find((c) => c.id === cardId && c.column === "ACTION_ITEMS");
+      if (card) {
+        card.completed = !card.completed;
+        await persistRetro(id, room);
+      }
+      break;
+    }
+
+    case "migrate-action": {
+      const { cardId, targetRoomId } = body as { cardId: string; targetRoomId: string };
+      const card = room.cards.find((c) => c.id === cardId && c.column === "ACTION_ITEMS");
+      if (card && !card.completed) {
+        card.migratedTo = targetRoomId;
+        // Adiciona o card na sala destino
+        const targetRoom = (await import("@/lib/retro-store")).getRetroRoom(targetRoomId);
+        targetRoom.cards.push({
+          id: generateCardId(),
+          column: "ACTION_ITEMS",
+          content: card.content,
+          author: card.author,
+          votes: 0,
+          completed: false,
+          migratedTo: null,
+        });
+        await persistRetro(id, room);
+        await persistRetro(targetRoomId, targetRoom);
+      }
       break;
     }
 
     case "reset": {
       room.cards = [];
-      room.revealedColumns = [];
+      room.revealedColumns = ["ACTION_ITEMS"];
       room.votingOpen = false;
       room.phase = "writing";
       room.players.forEach((p) => {

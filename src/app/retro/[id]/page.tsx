@@ -11,6 +11,8 @@ interface RetroCard {
   content: string;
   author: string;
   votes: number;
+  completed: boolean;
+  migratedTo?: string | null;
 }
 
 interface RetroPlayer {
@@ -346,10 +348,10 @@ export default function RetroBoard({
 
           {/* Action buttons */}
           <div className="flex flex-wrap justify-center gap-3">
-            {/* Reveal per column (disponível até todas serem reveladas) */}
+            {/* Reveal per column (ACTION_ITEMS é sempre aberto) */}
             {room.phase !== "done" && room.revealedColumns.length < 3 && (
               <>
-                {COLUMNS.map((col) => (
+                {COLUMNS.filter((col) => col.key !== "ACTION_ITEMS").map((col) => (
                   <button
                     key={col.key}
                     onClick={() => {
@@ -378,20 +380,20 @@ export default function RetroBoard({
               </>
             )}
 
-            {/* Encerrar votação - só quando os 3 pilares foram revelados */}
-            {room.phase === "voting" && room.revealedColumns.length === 3 && (
+            {/* Encerrar retro - só precisa ter revelado WENT_WELL e IMPROVE */}
+            {room.phase === "voting" && room.revealedColumns.includes("WENT_WELL") && room.revealedColumns.includes("IMPROVE") && (
               <button
                 onClick={() => sendAction({ action: "close-voting" })}
                 className="px-6 py-3 bg-red-400/10 border border-red-400/50 text-red-400 font-semibold rounded-lg hover:bg-red-400/20 hover:scale-105 active:scale-95 transition-all text-sm"
               >
-                🔒 Encerrar Votação
+                🔒 Concluir Retro
               </button>
             )}
 
             {/* Indicador de pilares faltantes */}
-            {room.phase === "voting" && room.revealedColumns.length < 3 && (
+            {room.phase === "voting" && (!room.revealedColumns.includes("WENT_WELL") || !room.revealedColumns.includes("IMPROVE")) && (
               <span className="text-xs text-slate-400 font-mono self-center">
-                ⚠️ Revele os {3 - room.revealedColumns.length} pilar(es) restante(s) para encerrar
+                ⚠️ Revele os pilares para poder encerrar
               </span>
             )}
 
@@ -430,8 +432,8 @@ export default function RetroBoard({
                 </span>
               </div>
 
-              {/* Input de Card (pode adicionar enquanto a coluna não foi revelada) */}
-              {room.phase !== "done" && !isRevealed && (
+              {/* Input de Card (ACTION_ITEMS sempre aberto; demais só enquanto não revelados) */}
+              {room.phase !== "done" && (col.key === "ACTION_ITEMS" || !isRevealed) && (
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -456,8 +458,8 @@ export default function RetroBoard({
               <div className="space-y-2 max-h-[55vh] overflow-y-auto">
                 {columnCards.map((card) => {
                   const isMine = card.author === nickname;
-                  // Só o próprio autor vê seu card antes de revelar (host também não vê)
-                  const canSee = isRevealed || isMine;
+                  // ACTION_ITEMS é sempre visível; demais só após revelar ou se for do próprio autor
+                  const canSee = col.key === "ACTION_ITEMS" || isRevealed || isMine;
 
                   // Card virado (não revelado e não é meu)
                   if (!canSee) {
@@ -537,6 +539,81 @@ export default function RetroBoard({
           );
         })}
       </div>
+
+      {/* === PLANO DE AÇÃO (visível quando retro concluída) === */}
+      {room.phase === "done" && room.cards.some((c) => c.column === "ACTION_ITEMS") && (
+        <section className="mt-6 bg-slate-900/50 border border-cyan-400/20 rounded-xl p-5 space-y-4">
+          <h3 className="text-sm font-semibold text-cyan-400 uppercase tracking-wider font-mono">
+            📝 Plano de Ação
+          </h3>
+          <div className="space-y-2">
+            {room.cards
+              .filter((c) => c.column === "ACTION_ITEMS")
+              .map((card) => (
+                <div
+                  key={card.id}
+                  className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${
+                    card.migratedTo
+                      ? "border-purple-400/30 bg-purple-400/5 opacity-60"
+                      : card.completed
+                        ? "border-emerald-400/30 bg-emerald-400/5"
+                        : "border-slate-700 bg-slate-800/80"
+                  }`}
+                >
+                  {/* Checkbox */}
+                  {isHost && !card.migratedTo && (
+                    <button
+                      onClick={() => sendAction({ action: "toggle-action-complete", cardId: card.id })}
+                      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                        card.completed
+                          ? "border-emerald-400 bg-emerald-400 text-slate-900"
+                          : "border-slate-500 hover:border-cyan-400"
+                      }`}
+                    >
+                      {card.completed && <span className="text-xs font-bold">✓</span>}
+                    </button>
+                  )}
+                  {!isHost && (
+                    <span className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
+                      card.completed ? "border-emerald-400 bg-emerald-400 text-slate-900" : "border-slate-600"
+                    }`}>
+                      {card.completed && <span className="text-xs font-bold">✓</span>}
+                    </span>
+                  )}
+
+                  {/* Content */}
+                  <span className={`flex-1 text-sm ${
+                    card.completed ? "line-through text-slate-500" : card.migratedTo ? "text-slate-500" : "text-slate-200"
+                  }`}>
+                    {card.content}
+                  </span>
+
+                  {/* Status badges */}
+                  {card.migratedTo && (
+                    <span className="text-[10px] bg-purple-400/10 border border-purple-400/30 text-purple-400 px-2 py-0.5 rounded-full font-mono">
+                      ↪ migrado
+                    </span>
+                  )}
+
+                  {/* Migrate button */}
+                  {isHost && !card.completed && !card.migratedTo && (
+                    <button
+                      onClick={() => {
+                        const target = prompt("ID da próxima sala de retro (cole o ID da URL):");
+                        if (target?.trim()) {
+                          sendAction({ action: "migrate-action", cardId: card.id, targetRoomId: target.trim() });
+                        }
+                      }}
+                      className="text-[10px] bg-purple-400/10 border border-purple-400/30 text-purple-400 px-2 py-1 rounded-md font-mono hover:bg-purple-400/20 transition-all"
+                    >
+                      ↪ Migrar
+                    </button>
+                  )}
+                </div>
+              ))}
+          </div>
+        </section>
+      )}
 
       {/* === PLAYERS ONLINE === */}
       <section className="mt-6 bg-slate-900/50 border border-slate-800 rounded-xl p-4">

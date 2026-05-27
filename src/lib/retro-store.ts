@@ -9,6 +9,8 @@ export interface RetroCard {
   content: string;
   author: string;
   votes: number;
+  completed: boolean;
+  migratedTo?: string | null;
 }
 
 export interface RetroPlayer {
@@ -35,7 +37,7 @@ export function getRetroRoom(id: string): RetroRoom {
     rooms.set(id, {
       players: [],
       cards: [],
-      revealedColumns: [],
+      revealedColumns: ["ACTION_ITEMS"],
       votingOpen: false,
       phase: "writing",
     });

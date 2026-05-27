@@ -29,6 +29,8 @@ model RetroCard {
   content   String
   author    String
   votes     Int          @default(0)
+  completed Boolean      @default(false)
+  migratedTo String?     // roomId da próxima retro para onde foi migrado
   createdAt DateTime     @default(now())
 
   @@index([sessionId, column])

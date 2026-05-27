@@ -15,6 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "SprintPulse",
   description: "BytePoker & PingBack — Votação e Retrospectiva em tempo real",
+  icons: { icon: "/icon.svg" },
 };
 
 export default function RootLayout({
