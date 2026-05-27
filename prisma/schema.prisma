@@ -1,0 +1,41 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// === RETRO (Persistido no Neon) ===
+
+model RetroSession {
+  id             String       @id @default(cuid())
+  roomId         String       @unique // ID da sala (slug usado na URL)
+  phase          String       @default("writing") // writing | voting | done
+  revealedColumns String[]    @default([]) // ["WENT_WELL", "IMPROVE", "ACTION_ITEMS"]
+  createdAt      DateTime     @default(now())
+  closedAt       DateTime?
+  cards          RetroCard[]
+
+  @@index([roomId])
+}
+
+model RetroCard {
+  id        String       @id @default(cuid())
+  sessionId String
+  session   RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  column    CardColumn
+  content   String
+  author    String
+  votes     Int          @default(0)
+  createdAt DateTime     @default(now())
+
+  @@index([sessionId, column])
+}
+
+enum CardColumn {
+  WENT_WELL
+  IMPROVE
+  ACTION_ITEMS
+}
