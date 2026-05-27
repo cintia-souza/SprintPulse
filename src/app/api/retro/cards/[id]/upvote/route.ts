@@ -15,7 +15,7 @@ export async function PATCH(
 
   const card = await prisma.retroCard.update({
     where: { id },
-    data: { upvotes: { increment: 1 } },
+    data: { votes: { increment: 1 } },
   });
 
   return NextResponse.json(card);
