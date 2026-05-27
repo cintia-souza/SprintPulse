@@ -11,14 +11,16 @@ datasource db {
 
 model RetroSession {
   id             String       @id @default(cuid())
-  roomId         String       @unique // ID da sala (slug usado na URL)
-  phase          String       @default("writing") // writing | voting | done
-  revealedColumns String[]    @default([]) // ["WENT_WELL", "IMPROVE", "ACTION_ITEMS"]
+  roomId         String       @unique
+  squad          String       @default("default")
+  phase          String       @default("writing")
+  revealedColumns String[]    @default([])
   createdAt      DateTime     @default(now())
   closedAt       DateTime?
   cards          RetroCard[]
 
   @@index([roomId])
+  @@index([squad])
 }
 
 model RetroCard {

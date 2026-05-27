@@ -21,6 +21,7 @@ export interface RetroPlayer {
 }
 
 export interface RetroRoom {
+  squad: string;
   players: RetroPlayer[];
   cards: RetroCard[];
   revealedColumns: CardColumn[];
@@ -35,6 +36,7 @@ let cardCounter = 0;
 export function getRetroRoom(id: string): RetroRoom {
   if (!rooms.has(id)) {
     rooms.set(id, {
+      squad: "default",
       players: [],
       cards: [],
       revealedColumns: ["ACTION_ITEMS"],

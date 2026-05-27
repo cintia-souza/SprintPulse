@@ -44,7 +44,7 @@ export async function POST(
 
   switch (body.action) {
     case "join": {
-      const { nickname, role } = body as { nickname: string; role: "host" | "member" };
+      const { nickname, role, squad } = body as { nickname: string; role: "host" | "member"; squad?: string };
       if (room.players.length === 0 && role !== "host") {
         return NextResponse.json(
           { error: "Somente o Host (PM/TL) pode criar a sala" },
@@ -56,6 +56,9 @@ export async function POST(
           { error: "Já existe um Host nesta sala" },
           { status: 403 }
         );
+      }
+      if (squad && room.players.length === 0) {
+        room.squad = squad;
       }
       if (!room.players.find((p) => p.nickname === nickname)) {
         room.players.push({ nickname, role, votesRemaining: 5, votedCardIds: [] });
@@ -90,8 +93,7 @@ export async function POST(
       }
       room.votingOpen = true;
       room.phase = "voting";
-      // Persiste estado parcial no banco
-      await persistRetro(id, room);
+      await persistRetro(id, room, room.squad);
       break;
     }
 
@@ -99,7 +101,7 @@ export async function POST(
       room.revealedColumns = ["WENT_WELL", "IMPROVE", "ACTION_ITEMS"];
       room.votingOpen = true;
       room.phase = "voting";
-      await persistRetro(id, room);
+      await persistRetro(id, room, room.squad);
       break;
     }
 
@@ -128,7 +130,7 @@ export async function POST(
       }
       room.votingOpen = false;
       room.phase = "done";
-      await persistRetro(id, room);
+      await persistRetro(id, room, room.squad);
       break;
     }
 
@@ -137,7 +139,7 @@ export async function POST(
       const card = room.cards.find((c) => c.id === cardId && c.column === "ACTION_ITEMS");
       if (card) {
         card.completed = !card.completed;
-        await persistRetro(id, room);
+        await persistRetro(id, room, room.squad);
       }
       break;
     }
@@ -147,7 +149,6 @@ export async function POST(
       const card = room.cards.find((c) => c.id === cardId && c.column === "ACTION_ITEMS");
       if (card && !card.completed) {
         card.migratedTo = targetRoomId;
-        // Adiciona o card na sala destino
         const targetRoom = (await import("@/lib/retro-store")).getRetroRoom(targetRoomId);
         targetRoom.cards.push({
           id: generateCardId(),
@@ -158,8 +159,8 @@ export async function POST(
           completed: false,
           migratedTo: null,
         });
-        await persistRetro(id, room);
-        await persistRetro(targetRoomId, targetRoom);
+        await persistRetro(id, room, room.squad);
+        await persistRetro(targetRoomId, targetRoom, targetRoom.squad);
       }
       break;
     }

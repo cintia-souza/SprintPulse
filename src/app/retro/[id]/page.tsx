@@ -170,10 +170,11 @@ export default function RetroBoard({
     e.preventDefault();
     if (!nickname.trim() || !roomId) return;
     setJoinError("");
+    const squad = typeof window !== "undefined" ? localStorage.getItem("sprintpulse_squad") || "" : "";
     const res = await fetch(`/api/retro/room/${roomId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "join", nickname: nickname.trim(), role }),
+      body: JSON.stringify({ action: "join", nickname: nickname.trim(), role, squad }),
     });
     if (!res.ok) {
       const data = await res.json();

@@ -2,12 +2,12 @@ import { prisma } from "@/lib/prisma";
 import { RetroRoom, CardColumn } from "@/lib/retro-store";
 
 // Persiste o estado da retro no Neon quando a votação é encerrada
-export async function persistRetro(roomId: string, room: RetroRoom) {
-  // Upsert session
+export async function persistRetro(roomId: string, room: RetroRoom, squad?: string) {
   const session = await prisma.retroSession.upsert({
     where: { roomId },
     create: {
       roomId,
+      squad: squad || "default",
       phase: room.phase,
       revealedColumns: room.revealedColumns,
       closedAt: room.phase === "done" ? new Date() : null,
@@ -49,6 +49,7 @@ export async function loadRetroFromDB(roomId: string): Promise<RetroRoom | null>
   if (!session) return null;
 
   return {
+    squad: session.squad,
     players: [],
     cards: session.cards.map((c) => ({
       id: c.id,
