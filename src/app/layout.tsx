@@ -16,6 +16,13 @@ export const metadata: Metadata = {
   title: "SprintPulse",
   description: "BytePoker & PingBack — Votação e Retrospectiva em tempo real",
   icons: { icon: "/icon.svg" },
+  manifest: "/manifest.json",
+  themeColor: "#22d3ee",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "SprintPulse",
+  },
 };
 
 export default function RootLayout({
@@ -28,7 +35,20 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-slate-950">{children}</body>
+      <body className="min-h-full flex flex-col bg-slate-950">
+        {children}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              if ('serviceWorker' in navigator) {
+                window.addEventListener('load', () => {
+                  navigator.serviceWorker.register('/sw.js');
+                });
+              }
+            `,
+          }}
+        />
+      </body>
     </html>
   );
 }
