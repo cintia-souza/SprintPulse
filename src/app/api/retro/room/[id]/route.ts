@@ -6,7 +6,6 @@ import {
   setRetroRoom,
 } from "@/lib/retro-store";
 import { persistRetro, loadRetroFromDB } from "@/lib/retro-sync";
-import { rateLimit } from "@/lib/rate-limit";
 import { sanitize, isValidNickname } from "@/lib/sanitize";
 
 // Garante que a sala está carregada (do banco ou nova)
@@ -30,13 +29,9 @@ async function ensureRoom(id: string) {
 }
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
-  if (!rateLimit(ip)) {
-    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-  }
   const { id } = await params;
   const room = await ensureRoom(id);
   return NextResponse.json(room);
@@ -46,10 +41,6 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
-  if (!rateLimit(ip)) {
-    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-  }
   const { id } = await params;
   const room = await ensureRoom(id);
   const body = await req.json();

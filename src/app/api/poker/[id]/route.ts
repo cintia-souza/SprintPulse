@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRoom, resetRoom, PointValue } from "@/lib/poker-store";
-import { rateLimit } from "@/lib/rate-limit";
 import { sanitize, isValidNickname } from "@/lib/sanitize";
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
-  if (!rateLimit(ip)) {
-    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-  }
   const { id } = await params;
   const room = getRoom(id);
   return NextResponse.json(room);
@@ -20,10 +15,6 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
-  if (!rateLimit(ip)) {
-    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-  }
   const { id } = await params;
   const room = getRoom(id);
   const body = await req.json();
