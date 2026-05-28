@@ -10,13 +10,15 @@ import { rateLimit } from "@/lib/rate-limit";
 import { sanitize, isValidNickname } from "@/lib/sanitize";
 
 // Garante que a sala está carregada (do banco ou nova)
+// Só carrega do banco se a sala nunca foi inicializada nesta instância
+const loadedRooms = new Set<string>();
+
 async function ensureRoom(id: string) {
-  let room = getRetroRoom(id);
-  // Se a sala está vazia no memory, tenta carregar do banco
-  if (room.cards.length === 0 && room.players.length === 0) {
+  const room = getRetroRoom(id);
+  if (!loadedRooms.has(id) && room.cards.length === 0 && room.players.length === 0) {
+    loadedRooms.add(id);
     const fromDB = await loadRetroFromDB(id);
     if (fromDB) {
-      // Restaura cards e estado do banco, players são efêmeros
       room.cards = fromDB.cards;
       room.revealedColumns = fromDB.revealedColumns;
       room.votingOpen = fromDB.votingOpen;

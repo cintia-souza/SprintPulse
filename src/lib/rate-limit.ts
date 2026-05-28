@@ -2,7 +2,7 @@
 const requests = new Map<string, { count: number; resetAt: number }>();
 
 const WINDOW_MS = 60_000; // 1 minute
-const MAX_REQUESTS = 100; // per window
+const MAX_REQUESTS = 600; // per window (suporta 10+ users polling)
 
 export function rateLimit(ip: string): boolean {
   const now = Date.now();
