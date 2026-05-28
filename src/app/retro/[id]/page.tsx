@@ -146,7 +146,17 @@ export default function RetroBoard({
   const pausePollRef = useRef(false);
 
   useEffect(() => {
-    params.then((p) => setRoomId(p.id));
+    params.then((p) => {
+      setRoomId(p.id);
+      // Restaurar sessão do sessionStorage ao carregar
+      const saved = sessionStorage.getItem(`retro_session_${p.id}`);
+      if (saved) {
+        const { nickname: n, role: r } = JSON.parse(saved);
+        setNickname(n);
+        setRole(r);
+        setJoined(true);
+      }
+    });
   }, [params]);
 
   const pollRoom = useCallback(async () => {
@@ -179,10 +189,15 @@ export default function RetroBoard({
 
   useEffect(() => {
     if (!joined || !roomId) return;
-    pollRoom();
+    // Re-join silencioso ao reconectar (garante que o servidor tem o player)
+    fetch(`/api/retro/room/${roomId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "join", nickname, role }),
+    }).then(() => pollRoom());
     pollRef.current = setInterval(pollRoom, 2000);
     return () => clearInterval(pollRef.current);
-  }, [joined, roomId, pollRoom]);
+  }, [joined, roomId, pollRoom, nickname, role]);
 
   // Envia ação e atualiza com a resposta do servidor (sem poll extra)
   const sendAction = useCallback(async (body: Record<string, unknown>) => {
@@ -221,6 +236,8 @@ export default function RetroBoard({
       setJoinError(data.error || "Erro ao entrar na sala");
       return;
     }
+    // Salvar sessão no sessionStorage
+    sessionStorage.setItem(`retro_session_${roomId}`, JSON.stringify({ nickname: nickname.trim(), role }));
     setJoined(true);
   };
 
