@@ -139,27 +139,27 @@ export default function PokerRoom({
   const [flipCards, setFlipCards] = useState(false);
   const prevRevealed = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
-  const sendingRef = useRef(false);
+  const lastDataRef = useRef<string>("");
+  const pausePollRef = useRef(false);
 
   useEffect(() => {
     params.then((p) => setRoomId(p.id));
   }, [params]);
 
-  // Stable polling — only updates state if data actually changed
+  // Polling estável — compara texto bruto para evitar re-renders
   const pollRoom = useCallback(async () => {
-    if (!roomId) return;
+    if (!roomId || pausePollRef.current) return;
     try {
       const res = await fetch(`/api/poker/${roomId}`);
       if (res.ok) {
-        const data: RoomState = await res.json();
-        setRoom((prev) => {
-          // Only update if data actually changed (avoid unnecessary re-renders)
-          if (JSON.stringify(prev) === JSON.stringify(data)) return prev;
-          return data;
-        });
+        const text = await res.text();
+        if (text !== lastDataRef.current) {
+          lastDataRef.current = text;
+          setRoom(JSON.parse(text));
+        }
       }
     } catch {
-      // Network error, skip this poll
+      // Network error, skip
     }
   }, [roomId]);
 
@@ -193,25 +193,29 @@ export default function PokerRoom({
   useEffect(() => {
     if (!joined || !roomId) return;
     pollRoom();
-    pollRef.current = setInterval(pollRoom, 1500); // 1.5s para reduzir carga
+    pollRef.current = setInterval(pollRoom, 2000);
     return () => clearInterval(pollRef.current);
   }, [joined, roomId, pollRoom]);
 
-  // Debounced action sender
+  // Envia ação e usa a resposta diretamente (sem poll extra)
   const sendAction = useCallback(async (body: Record<string, unknown>) => {
-    if (sendingRef.current) return;
-    sendingRef.current = true;
+    if (!roomId) return;
+    pausePollRef.current = true;
     try {
-      await fetch(`/api/poker/${roomId}`, {
+      const res = await fetch(`/api/poker/${roomId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      await pollRoom();
+      if (res.ok) {
+        const text = await res.text();
+        lastDataRef.current = text;
+        setRoom(JSON.parse(text));
+      }
     } finally {
-      sendingRef.current = false;
+      setTimeout(() => { pausePollRef.current = false; }, 500);
     }
-  }, [roomId, pollRoom]);
+  }, [roomId]);
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
