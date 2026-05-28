@@ -36,70 +36,81 @@ const COLUMNS: { key: CardColumn; label: string; accent: string; icon: string }[
   { key: "ACTION_ITEMS", label: "Ações", accent: "border-cyan-400", icon: "🔵" },
 ];
 
-// --- Sound effects ---
-function playSound(type: "card" | "reveal" | "vote" | "done") {
-  const ctx = new AudioContext();
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  gain.gain.value = 0.12;
+// --- Sound effects (single AudioContext reused) ---
+let audioCtx: AudioContext | null = null;
+function getAudioCtx() {
+  if (!audioCtx || audioCtx.state === "closed") {
+    audioCtx = new AudioContext();
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
 
-  switch (type) {
-    case "card":
-      osc.frequency.value = 600;
-      osc.type = "sine";
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.08);
-      break;
-    case "reveal":
-      osc.frequency.value = 440;
-      osc.type = "triangle";
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.35);
-      setTimeout(() => {
-        const c = new AudioContext();
-        const o = c.createOscillator();
-        const g = c.createGain();
-        o.connect(g);
-        g.connect(c.destination);
-        o.frequency.value = 660;
-        o.type = "triangle";
-        g.gain.value = 0.1;
-        g.gain.exponentialRampToValueAtTime(0.01, c.currentTime + 0.25);
-        o.start();
-        o.stop(c.currentTime + 0.25);
-      }, 120);
-      break;
-    case "vote":
-      osc.frequency.value = 780;
-      osc.type = "sine";
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.06);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.06);
-      break;
-    case "done":
-      osc.frequency.value = 523;
-      osc.type = "sine";
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.5);
-      setTimeout(() => {
-        const c = new AudioContext();
-        const o = c.createOscillator();
-        const g = c.createGain();
-        o.connect(g);
-        g.connect(c.destination);
-        o.frequency.value = 784;
-        o.type = "sine";
-        g.gain.value = 0.1;
-        g.gain.exponentialRampToValueAtTime(0.01, c.currentTime + 0.4);
-        o.start();
-        o.stop(c.currentTime + 0.4);
-      }, 180);
-      break;
+function playSound(type: "card" | "reveal" | "vote" | "done") {
+  try {
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.value = 0.12;
+
+    switch (type) {
+      case "card":
+        osc.frequency.value = 600;
+        osc.type = "sine";
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.08);
+        break;
+      case "reveal":
+        osc.frequency.value = 440;
+        osc.type = "triangle";
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.35);
+        setTimeout(() => {
+          const o2 = ctx.createOscillator();
+          const g2 = ctx.createGain();
+          o2.connect(g2);
+          g2.connect(ctx.destination);
+          o2.frequency.value = 660;
+          o2.type = "triangle";
+          g2.gain.value = 0.1;
+          g2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25);
+          o2.start();
+          o2.stop(ctx.currentTime + 0.25);
+        }, 120);
+        break;
+      case "vote":
+        osc.frequency.value = 780;
+        osc.type = "sine";
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.06);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.06);
+        break;
+      case "done":
+        osc.frequency.value = 523;
+        osc.type = "sine";
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.5);
+        setTimeout(() => {
+          const o2 = ctx.createOscillator();
+          const g2 = ctx.createGain();
+          o2.connect(g2);
+          g2.connect(ctx.destination);
+          o2.frequency.value = 784;
+          o2.type = "sine";
+          g2.gain.value = 0.1;
+          g2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+          o2.start();
+          o2.stop(ctx.currentTime + 0.4);
+        }, 180);
+        break;
+    }
+  } catch {
+    // Silently fail if audio not available
   }
 }
 
@@ -138,8 +149,18 @@ export default function RetroBoard({
 
   const pollRoom = useCallback(async () => {
     if (!roomId) return;
-    const res = await fetch(`/api/retro/room/${roomId}`);
-    if (res.ok) setRoom(await res.json());
+    try {
+      const res = await fetch(`/api/retro/room/${roomId}`);
+      if (res.ok) {
+        const data: RoomState = await res.json();
+        setRoom((prev) => {
+          if (JSON.stringify(prev) === JSON.stringify(data)) return prev;
+          return data;
+        });
+      }
+    } catch {
+      // Network error, skip
+    }
   }, [roomId]);
 
   // Sound on phase transitions
@@ -156,18 +177,26 @@ export default function RetroBoard({
   useEffect(() => {
     if (!joined || !roomId) return;
     pollRoom();
-    pollRef.current = setInterval(pollRoom, 1000);
+    pollRef.current = setInterval(pollRoom, 1500); // 1.5s para reduzir carga com muitos users
     return () => clearInterval(pollRef.current);
   }, [joined, roomId, pollRoom]);
 
-  const sendAction = async (body: Record<string, unknown>) => {
-    await fetch(`/api/retro/room/${roomId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    pollRoom();
-  };
+  const sendingRef = useRef(false);
+
+  const sendAction = useCallback(async (body: Record<string, unknown>) => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    try {
+      await fetch(`/api/retro/room/${roomId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      await pollRoom();
+    } finally {
+      sendingRef.current = false;
+    }
+  }, [roomId, pollRoom]);
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();

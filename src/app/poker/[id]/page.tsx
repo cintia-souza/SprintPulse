@@ -16,76 +16,86 @@ interface RoomState {
   revealed: boolean;
 }
 
-// --- Sound effects via Web Audio API (no external files) ---
-function playSound(type: "vote" | "reveal" | "reset" | "consensus") {
-  const ctx = new AudioContext();
-  const osc = ctx.createOscillator();
-  const gain = ctx.createGain();
-  osc.connect(gain);
-  gain.connect(ctx.destination);
-  gain.gain.value = 0.15;
+// --- Single AudioContext (reused) ---
+let audioCtx: AudioContext | null = null;
+function getAudioCtx() {
+  if (!audioCtx || audioCtx.state === "closed") {
+    audioCtx = new AudioContext();
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  return audioCtx;
+}
 
-  switch (type) {
-    case "vote":
-      osc.frequency.value = 880;
-      osc.type = "sine";
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.1);
-      break;
-    case "reveal":
-      osc.frequency.value = 440;
-      osc.type = "triangle";
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.4);
-      // Second tone
-      setTimeout(() => {
-        const ctx2 = new AudioContext();
-        const osc2 = ctx2.createOscillator();
-        const g2 = ctx2.createGain();
-        osc2.connect(g2);
-        g2.connect(ctx2.destination);
-        osc2.frequency.value = 660;
-        osc2.type = "triangle";
-        g2.gain.value = 0.12;
-        g2.gain.exponentialRampToValueAtTime(0.01, ctx2.currentTime + 0.3);
-        osc2.start();
-        osc2.stop(ctx2.currentTime + 0.3);
-      }, 150);
-      break;
-    case "reset":
-      osc.frequency.value = 330;
-      osc.type = "square";
-      gain.gain.value = 0.08;
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.15);
-      break;
-    case "consensus":
-      osc.frequency.value = 523;
-      osc.type = "sine";
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.6);
-      setTimeout(() => {
-        const c = new AudioContext();
-        const o = c.createOscillator();
-        const g = c.createGain();
-        o.connect(g);
-        g.connect(c.destination);
-        o.frequency.value = 784;
-        o.type = "sine";
-        g.gain.value = 0.12;
-        g.gain.exponentialRampToValueAtTime(0.01, c.currentTime + 0.5);
-        o.start();
-        o.stop(c.currentTime + 0.5);
-      }, 200);
-      break;
+function playSound(type: "vote" | "reveal" | "reset" | "consensus") {
+  try {
+    const ctx = getAudioCtx();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.value = 0.12;
+
+    switch (type) {
+      case "vote":
+        osc.frequency.value = 880;
+        osc.type = "sine";
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.1);
+        break;
+      case "reveal":
+        osc.frequency.value = 440;
+        osc.type = "triangle";
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.4);
+        setTimeout(() => {
+          const o2 = ctx.createOscillator();
+          const g2 = ctx.createGain();
+          o2.connect(g2);
+          g2.connect(ctx.destination);
+          o2.frequency.value = 660;
+          o2.type = "triangle";
+          g2.gain.value = 0.1;
+          g2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+          o2.start();
+          o2.stop(ctx.currentTime + 0.3);
+        }, 150);
+        break;
+      case "reset":
+        osc.frequency.value = 330;
+        osc.type = "square";
+        gain.gain.value = 0.06;
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.15);
+        break;
+      case "consensus":
+        osc.frequency.value = 523;
+        osc.type = "sine";
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.5);
+        setTimeout(() => {
+          const o2 = ctx.createOscillator();
+          const g2 = ctx.createGain();
+          o2.connect(g2);
+          g2.connect(ctx.destination);
+          o2.frequency.value = 784;
+          o2.type = "sine";
+          g2.gain.value = 0.1;
+          g2.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+          o2.start();
+          o2.stop(ctx.currentTime + 0.5);
+        }, 200);
+        break;
+    }
+  } catch {
+    // Silently fail if audio not available
   }
 }
 
-// --- Confetti particles ---
+// --- Confetti ---
 function Confetti({ active }: { active: boolean }) {
   if (!active) return null;
   const particles = Array.from({ length: 40 }, (_, i) => ({
@@ -129,25 +139,38 @@ export default function PokerRoom({
   const [flipCards, setFlipCards] = useState(false);
   const prevRevealed = useRef(false);
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const sendingRef = useRef(false);
 
   useEffect(() => {
     params.then((p) => setRoomId(p.id));
   }, [params]);
 
+  // Stable polling — only updates state if data actually changed
   const pollRoom = useCallback(async () => {
     if (!roomId) return;
-    const res = await fetch(`/api/poker/${roomId}`);
-    if (res.ok) setRoom(await res.json());
+    try {
+      const res = await fetch(`/api/poker/${roomId}`);
+      if (res.ok) {
+        const data: RoomState = await res.json();
+        setRoom((prev) => {
+          // Only update if data actually changed (avoid unnecessary re-renders)
+          if (JSON.stringify(prev) === JSON.stringify(data)) return prev;
+          return data;
+        });
+      }
+    } catch {
+      // Network error, skip this poll
+    }
   }, [roomId]);
 
-  // Detect reveal transition to trigger effects
+  // Detect reveal/reset transitions (only fires when room.revealed actually changes)
   useEffect(() => {
     if (room.revealed && !prevRevealed.current) {
       playSound("reveal");
       setFlipCards(true);
       setTimeout(() => setFlipCards(false), 800);
 
-      // Check consensus for confetti
+      // Check consensus
       const devVotes = room.players
         .filter((p) => p.role === "dev" && p.vote !== null)
         .map((p) => p.vote);
@@ -164,23 +187,31 @@ export default function PokerRoom({
       playSound("reset");
     }
     prevRevealed.current = room.revealed;
-  }, [room.revealed, room.players]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.revealed]);
 
   useEffect(() => {
     if (!joined || !roomId) return;
     pollRoom();
-    pollRef.current = setInterval(pollRoom, 1000);
+    pollRef.current = setInterval(pollRoom, 1500); // 1.5s para reduzir carga
     return () => clearInterval(pollRef.current);
   }, [joined, roomId, pollRoom]);
 
-  const sendAction = async (body: Record<string, unknown>) => {
-    await fetch(`/api/poker/${roomId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    pollRoom();
-  };
+  // Debounced action sender
+  const sendAction = useCallback(async (body: Record<string, unknown>) => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    try {
+      await fetch(`/api/poker/${roomId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      await pollRoom();
+    } finally {
+      sendingRef.current = false;
+    }
+  }, [roomId, pollRoom]);
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -238,7 +269,7 @@ export default function PokerRoom({
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
             placeholder="Seu apelido..."
-            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400/50 font-mono transition-all"
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-400/50 font-mono"
             minLength={2}
             required
           />
@@ -312,7 +343,6 @@ export default function PokerRoom({
       <div className="max-w-5xl mx-auto space-y-6">
         {/* === MESA DE VOTAÇÃO === */}
         <section className="bg-gradient-to-b from-slate-900/80 to-slate-900/40 border border-slate-800 rounded-2xl p-6 relative overflow-hidden">
-          {/* Glow effect when all voted */}
           {allVoted && !room.revealed && (
             <div className="absolute inset-0 bg-cyan-400/5 animate-pulse rounded-2xl" />
           )}
@@ -328,14 +358,12 @@ export default function PokerRoom({
             )}
           </div>
 
-          {/* Players around the table */}
           <div className="flex flex-wrap justify-center gap-5">
             {room.players.map((p) => (
               <div
                 key={p.nickname}
                 className="flex flex-col items-center gap-2 group"
               >
-                {/* Card with flip animation */}
                 <div
                   className={`relative w-16 h-24 transition-all duration-500 ${
                     flipCards && p.role === "dev" ? "animate-flip" : ""
@@ -349,7 +377,7 @@ export default function PokerRoom({
                         : room.revealed && p.vote !== null
                           ? "border-emerald-400 bg-gradient-to-b from-emerald-400/20 to-emerald-400/5 text-emerald-400 shadow-emerald-400/20"
                           : p.vote !== null
-                            ? "border-cyan-400 bg-gradient-to-b from-cyan-400/15 to-cyan-400/5 text-cyan-400 shadow-cyan-400/10 group-hover:shadow-cyan-400/20"
+                            ? "border-cyan-400 bg-gradient-to-b from-cyan-400/15 to-cyan-400/5 text-cyan-400 shadow-cyan-400/10"
                             : "border-slate-700 bg-slate-800/80 text-slate-600"
                     }`}
                   >
@@ -362,7 +390,6 @@ export default function PokerRoom({
                           : "?"}
                   </div>
                 </div>
-                {/* Name with online pulse */}
                 <div className="flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                   <span className="text-xs text-slate-400 font-mono truncate max-w-[80px]">
@@ -377,7 +404,6 @@ export default function PokerRoom({
         {/* === CONTROLES DO HOST === */}
         {role === "host" && (
           <section className="space-y-4">
-            {/* Compartilhar sala */}
             <div className="flex items-center justify-center">
               <div className="flex items-center gap-2 bg-slate-800/80 border border-slate-700 rounded-lg px-3 py-2 max-w-md w-full">
                 <span className="text-xs text-slate-500">🔗</span>
@@ -392,7 +418,7 @@ export default function PokerRoom({
                   }}
                   className={`px-3 py-1 rounded-md text-xs font-semibold transition-all ${
                     copied
-                      ? "bg-emerald-400/10 border border-emerald-400/50 text-emerald-400 scale-105"
+                      ? "bg-emerald-400/10 border border-emerald-400/50 text-emerald-400"
                       : "bg-cyan-400/10 border border-cyan-400/50 text-cyan-400 hover:bg-cyan-400/20"
                   }`}
                 >
@@ -401,7 +427,6 @@ export default function PokerRoom({
               </div>
             </div>
 
-            {/* Botões de ação */}
             <div className="flex justify-center gap-4">
               <button
                 onClick={() => sendAction({ action: "reveal" })}
@@ -453,7 +478,7 @@ export default function PokerRoom({
           </section>
         )}
 
-        {/* === RESUMO (após revelar) === */}
+        {/* === RESUMO === */}
         {room.revealed && (
           <section className="bg-gradient-to-b from-slate-900/80 to-slate-900/40 border border-slate-800 rounded-2xl p-6 space-y-5 animate-slide-up">
             <div className="flex items-center gap-3">
@@ -498,7 +523,6 @@ export default function PokerRoom({
               </div>
             </div>
 
-            {/* Distribuição visual */}
             <div>
               <p className="text-xs text-slate-500 font-mono mb-3">Distribuição</p>
               <div className="flex flex-wrap gap-3">
@@ -528,7 +552,6 @@ export default function PokerRoom({
               </div>
             </div>
 
-            {/* Votos Individuais */}
             <div>
               <p className="text-xs text-slate-500 font-mono mb-3">Votos Individuais</p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
