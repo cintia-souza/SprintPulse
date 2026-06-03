@@ -7,33 +7,71 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// === POKER (Persistido para funcionar entre instâncias) ===
+
+model PokerRoom {
+  id       String        @id @default(cuid())
+  roomId   String        @unique
+  revealed Boolean       @default(false)
+  players  PokerPlayer[]
+
+  @@index([roomId])
+}
+
+model PokerPlayer {
+  id       String    @id @default(cuid())
+  roomId   String
+  room     PokerRoom @relation(fields: [roomId], references: [roomId], onDelete: Cascade)
+  nickname String
+  role     String    // "host" | "dev"
+  vote     String?   // null = não votou, "5", "13", "?", "☕" etc
+
+  @@unique([roomId, nickname])
+  @@index([roomId])
+}
+
 // === RETRO (Persistido no Neon) ===
 
 model RetroSession {
-  id             String       @id @default(cuid())
-  roomId         String       @unique
-  squad          String       @default("default")
-  phase          String       @default("writing")
-  revealedColumns String[]    @default([])
-  createdAt      DateTime     @default(now())
-  closedAt       DateTime?
-  cards          RetroCard[]
+  id              String        @id @default(cuid())
+  roomId          String        @unique
+  squad           String        @default("default")
+  phase           String        @default("writing")
+  revealedColumns String[]      @default([])
+  votingOpen      Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  closedAt        DateTime?
+  cards           RetroCard[]
+  players         RetroPlayer[]
 
   @@index([roomId])
   @@index([squad])
 }
 
+model RetroPlayer {
+  id           String       @id @default(cuid())
+  sessionId    String
+  session      RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  nickname     String
+  role         String       // "host" | "member"
+  votesRemaining Int        @default(5)
+  votedCardIds String[]     @default([])
+
+  @@unique([sessionId, nickname])
+  @@index([sessionId])
+}
+
 model RetroCard {
-  id        String       @id @default(cuid())
-  sessionId String
-  session   RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  column    CardColumn
-  content   String
-  author    String
-  votes     Int          @default(0)
-  completed Boolean      @default(false)
-  migratedTo String?     // roomId da próxima retro para onde foi migrado
-  createdAt DateTime     @default(now())
+  id         String       @id @default(cuid())
+  sessionId  String
+  session    RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  column     CardColumn
+  content    String
+  author     String
+  votes      Int          @default(0)
+  completed  Boolean      @default(false)
+  migratedTo String?
+  createdAt  DateTime     @default(now())
 
   @@index([sessionId, column])
 }
