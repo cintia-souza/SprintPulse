@@ -16,7 +16,7 @@ interface RoomState {
   revealed: boolean;
 }
 
-// --- Single AudioContext (reused) ---
+// --- Single AudioContext reused across all sounds ---
 let audioCtx: AudioContext | null = null;
 function getAudioCtx() {
   if (!audioCtx || audioCtx.state === "closed") {
@@ -137,45 +137,41 @@ export default function PokerRoom({
   const [copied, setCopied] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
   const [flipCards, setFlipCards] = useState(false);
-  const prevRevealed = useRef(false);
+
+  // Refs to prevent re-render loops and duplicate sounds
+  const prevRevealedRef = useRef(false);
+  const soundPlayedRef = useRef(false);
+  const lastJsonRef = useRef("");
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
-  const lastDataRef = useRef<string>("");
-  const pausePollRef = useRef(false);
 
   useEffect(() => {
-    params.then((p) => {
-      setRoomId(p.id);
-      // Restaurar sessão do sessionStorage ao carregar
-      const saved = sessionStorage.getItem(`poker_session_${p.id}`);
-      if (saved) {
-        const { nickname: n, role: r } = JSON.parse(saved);
-        setNickname(n);
-        setRole(r);
-        setJoined(true);
-      }
-    });
+    params.then((p) => setRoomId(p.id));
   }, [params]);
 
-  // Polling estável — compara texto bruto para evitar re-renders
+  // Stable poll — only updates state when data actually changes
   const pollRoom = useCallback(async () => {
-    if (!roomId || pausePollRef.current) return;
+    if (!roomId) return;
     try {
       const res = await fetch(`/api/poker/${roomId}`);
-      if (res.ok) {
-        const text = await res.text();
-        if (text !== lastDataRef.current) {
-          lastDataRef.current = text;
-          setRoom(JSON.parse(text));
-        }
-      }
+      if (!res.ok) return;
+      const text = await res.text();
+      // Skip setState if nothing changed
+      if (text === lastJsonRef.current) return;
+      lastJsonRef.current = text;
+      setRoom(JSON.parse(text));
     } catch {
       // Network error, skip
     }
   }, [roomId]);
 
-  // Detect reveal/reset transitions (only fires when room.revealed actually changes)
+  // Sound effects — only triggered on actual revealed state transition
   useEffect(() => {
-    if (room.revealed && !prevRevealed.current) {
+    const wasRevealed = prevRevealedRef.current;
+    prevRevealedRef.current = room.revealed;
+
+    // Reveal transition: false → true
+    if (room.revealed && !wasRevealed && !soundPlayedRef.current) {
+      soundPlayedRef.current = true;
       playSound("reveal");
       setFlipCards(true);
       setTimeout(() => setFlipCards(false), 800);
@@ -193,51 +189,48 @@ export default function PokerRoom({
         }, 500);
       }
     }
-    if (!room.revealed && prevRevealed.current) {
+
+    // Reset transition: true → false
+    if (!room.revealed && wasRevealed) {
+      soundPlayedRef.current = false;
       playSound("reset");
     }
-    prevRevealed.current = room.revealed;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room.revealed]);
+  }, [room.revealed]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Polling lifecycle — 2s interval to reduce load with many players
   useEffect(() => {
     if (!joined || !roomId) return;
-    // Re-join silencioso ao reconectar (garante que o servidor tem o player)
-    fetch(`/api/poker/${roomId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "join", nickname, role }),
-    }).then(() => pollRoom());
+    pollRoom();
     pollRef.current = setInterval(pollRoom, 2000);
     return () => clearInterval(pollRef.current);
-  }, [joined, roomId, pollRoom, nickname, role]);
+  }, [joined, roomId, pollRoom]);
 
-  // Envia ação e usa a resposta diretamente (sem poll extra)
-  const sendAction = useCallback(async (body: Record<string, unknown>) => {
-    if (!roomId) return;
-    pausePollRef.current = true;
-    try {
-      const res = await fetch(`/api/poker/${roomId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        const text = await res.text();
-        lastDataRef.current = text;
-        setRoom(JSON.parse(text));
+  // Send action and use response directly (avoids extra poll)
+  const sendAction = useCallback(
+    async (body: Record<string, unknown>) => {
+      if (!roomId) return;
+      try {
+        const res = await fetch(`/api/poker/${roomId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          const text = await res.text();
+          lastJsonRef.current = text;
+          setRoom(JSON.parse(text));
+        }
+      } catch {
+        // Network error
       }
-    } finally {
-      setTimeout(() => { pausePollRef.current = false; }, 500);
-    }
-  }, [roomId]);
+    },
+    [roomId]
+  );
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nickname.trim() || !roomId) return;
     await sendAction({ action: "join", nickname: nickname.trim(), role });
-    // Salvar sessão no sessionStorage
-    sessionStorage.setItem(`poker_session_${roomId}`, JSON.stringify({ nickname: nickname.trim(), role }));
     setJoined(true);
   };
 
@@ -274,10 +267,10 @@ export default function PokerRoom({
       <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
         <form
           onSubmit={handleJoin}
-          className="w-full max-w-sm border border-cyan-400/30 bg-slate-900/80 backdrop-blur-sm rounded-xl p-8 space-y-6 animate-fade-in"
+          className="w-full max-w-sm border border-cyan-400/30 bg-slate-900/80 backdrop-blur-sm rounded-xl p-8 space-y-6"
         >
           <div className="text-center space-y-2">
-            <h1 className="text-3xl font-bold text-cyan-400 font-mono tracking-tight animate-pulse-slow">
+            <h1 className="text-3xl font-bold text-cyan-400 font-mono tracking-tight">
               🃏 BytePoker
             </h1>
             <p className="text-xs text-slate-500 font-mono">
@@ -383,7 +376,7 @@ export default function PokerRoom({
             {room.players.map((p) => (
               <div
                 key={p.nickname}
-                className="flex flex-col items-center gap-2 group"
+                className="flex flex-col items-center gap-2"
               >
                 <div
                   className={`relative w-16 h-24 transition-all duration-500 ${
@@ -412,7 +405,7 @@ export default function PokerRoom({
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                   <span className="text-xs text-slate-400 font-mono truncate max-w-[80px]">
                     {p.nickname}
                   </span>
@@ -501,13 +494,13 @@ export default function PokerRoom({
 
         {/* === RESUMO === */}
         {room.revealed && (
-          <section className="bg-gradient-to-b from-slate-900/80 to-slate-900/40 border border-slate-800 rounded-2xl p-6 space-y-5 animate-slide-up">
+          <section className="bg-gradient-to-b from-slate-900/80 to-slate-900/40 border border-slate-800 rounded-2xl p-6 space-y-5">
             <div className="flex items-center gap-3">
               <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider font-mono">
                 Resumo da Rodada
               </h3>
               {consensus && (
-                <span className="text-xs bg-emerald-400/10 border border-emerald-400/50 text-emerald-400 px-2 py-0.5 rounded-full font-mono animate-pulse">
+                <span className="text-xs bg-emerald-400/10 border border-emerald-400/50 text-emerald-400 px-2 py-0.5 rounded-full font-mono">
                   🎉 Consenso!
                 </span>
               )}
