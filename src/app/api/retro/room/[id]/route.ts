@@ -4,13 +4,18 @@ import {
   generateCardId,
   CardColumn,
   setRetroRoom,
+  touchRetroPlayer,
 } from "@/lib/retro-store";
 import { persistRetro, loadRetroFromDB } from "@/lib/retro-sync";
+import { rateLimit } from "@/lib/rate-limit";
 import { sanitize, isValidNickname } from "@/lib/sanitize";
 
-// Garante que a sala está carregada (do banco ou nova)
-// Só carrega do banco se a sala nunca foi inicializada nesta instância
-const loadedRooms = new Set<string>();
+// Track which rooms have been loaded from DB (survives hot reload)
+const globalForLoaded = globalThis as unknown as { retroLoadedRooms?: Set<string> };
+if (!globalForLoaded.retroLoadedRooms) {
+  globalForLoaded.retroLoadedRooms = new Set();
+}
+const loadedRooms = globalForLoaded.retroLoadedRooms;
 
 async function ensureRoom(id: string) {
   const room = getRetroRoom(id);
@@ -22,6 +27,7 @@ async function ensureRoom(id: string) {
       room.revealedColumns = fromDB.revealedColumns;
       room.votingOpen = fromDB.votingOpen;
       room.phase = fromDB.phase;
+      room.squad = fromDB.squad;
       setRetroRoom(id, room);
     }
   }
@@ -29,18 +35,37 @@ async function ensureRoom(id: string) {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ip = req.headers.get("x-forwarded-for") || "unknown";
+  if (!rateLimit(ip)) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
   const { id } = await params;
   const room = await ensureRoom(id);
-  return NextResponse.json(room);
+
+  // Strip lastSeen from response
+  return NextResponse.json({
+    squad: room.squad,
+    players: room.players.map(({ nickname, role, votesRemaining, votedCardIds }) => ({
+      nickname, role, votesRemaining, votedCardIds,
+    })),
+    cards: room.cards,
+    revealedColumns: room.revealedColumns,
+    votingOpen: room.votingOpen,
+    phase: room.phase,
+  });
 }
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ip = req.headers.get("x-forwarded-for") || "unknown";
+  if (!rateLimit(ip)) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
   const { id } = await params;
   const room = await ensureRoom(id);
   const body = await req.json();
@@ -69,9 +94,24 @@ export async function POST(
       if (squad && room.players.length === 0) {
         room.squad = sanitize(squad, 50);
       }
-      if (!room.players.find((p) => p.nickname === nickname)) {
-        room.players.push({ nickname: sanitize(nickname, 30), role, votesRemaining: 5, votedCardIds: [] });
+      const existing = room.players.find((p) => p.nickname === nickname);
+      if (existing) {
+        existing.lastSeen = Date.now();
+      } else {
+        room.players.push({
+          nickname: sanitize(nickname, 30),
+          role,
+          votesRemaining: 5,
+          votedCardIds: [],
+          lastSeen: Date.now(),
+        });
       }
+      break;
+    }
+
+    case "heartbeat": {
+      const { nickname } = body as { nickname: string };
+      touchRetroPlayer(room, nickname);
       break;
     }
 
@@ -85,6 +125,7 @@ export async function POST(
       if (!validColumns.includes(column)) {
         return NextResponse.json({ error: "Coluna inválida" }, { status: 400 });
       }
+      touchRetroPlayer(room, nickname);
       const sanitizedContent = sanitize(content, 500);
       if (sanitizedContent) {
         room.cards.push({
@@ -128,17 +169,17 @@ export async function POST(
         card.votes++;
         player.votesRemaining--;
         player.votedCardIds.push(cardId);
+        player.lastSeen = Date.now();
       }
       break;
     }
 
     case "close-voting": {
-      // Regra: precisa ter revelado WENT_WELL e IMPROVE
       const minRevealed = room.revealedColumns.includes("WENT_WELL") &&
         room.revealedColumns.includes("IMPROVE");
       if (!minRevealed) {
         return NextResponse.json(
-          { error: "Revele pelo menos os pilares 'O que foi bem' e 'O que pode melhorar' antes de encerrar" },
+          { error: "Revele pelo menos os pilares antes de encerrar" },
           { status: 400 }
         );
       }
@@ -192,5 +233,15 @@ export async function POST(
     }
   }
 
-  return NextResponse.json(room);
+  // Strip lastSeen from response
+  return NextResponse.json({
+    squad: room.squad,
+    players: room.players.map(({ nickname, role, votesRemaining, votedCardIds }) => ({
+      nickname, role, votesRemaining, votedCardIds,
+    })),
+    cards: room.cards,
+    revealedColumns: room.revealedColumns,
+    votingOpen: room.votingOpen,
+    phase: room.phase,
+  });
 }

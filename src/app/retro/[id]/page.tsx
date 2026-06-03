@@ -160,21 +160,22 @@ export default function RetroBoard({
   }, [params]);
 
   const pollRoom = useCallback(async () => {
-    if (!roomId || pausePollRef.current) return;
+    if (!roomId || !nickname || pausePollRef.current) return;
     try {
-      const res = await fetch(`/api/retro/room/${roomId}`);
+      const res = await fetch(`/api/retro/room/${roomId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "heartbeat", nickname }),
+      });
       if (res.ok) {
         const text = await res.text();
-        // Só atualiza se os dados realmente mudaram
         if (text !== lastDataRef.current) {
           lastDataRef.current = text;
           setRoom(JSON.parse(text));
         }
       }
-    } catch {
-      // Network error, skip
-    }
-  }, [roomId]);
+    } catch {}
+  }, [roomId, nickname]);
 
   // Sound on phase transitions
   useEffect(() => {

@@ -1,20 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRoom, resetRoom, PointValue } from "@/lib/poker-store";
+import { getRoom, resetRoom, touchPlayer, PointValue } from "@/lib/poker-store";
+import { rateLimit } from "@/lib/rate-limit";
 import { sanitize, isValidNickname } from "@/lib/sanitize";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ip = req.headers.get("x-forwarded-for") || "unknown";
+  if (!rateLimit(ip)) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
   const { id } = await params;
   const room = getRoom(id);
-  return NextResponse.json(room);
+
+  // Return without lastSeen (internal field)
+  const sanitizedRoom = {
+    players: room.players.map(({ nickname, role, vote }) => ({ nickname, role, vote })),
+    revealed: room.revealed,
+  };
+
+  return NextResponse.json(sanitizedRoom);
 }
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const ip = req.headers.get("x-forwarded-for") || "unknown";
+  if (!rateLimit(ip)) {
+    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+  }
   const { id } = await params;
   const room = getRoom(id);
   const body = await req.json();
@@ -31,8 +47,11 @@ export async function POST(
       if (role !== "host" && role !== "dev") {
         return NextResponse.json({ error: "Role inválido" }, { status: 400 });
       }
-      if (!room.players.find((p) => p.nickname === nickname)) {
-        room.players.push({ nickname: sanitize(nickname, 30), role, vote: null });
+      const existing = room.players.find((p) => p.nickname === nickname);
+      if (existing) {
+        existing.lastSeen = Date.now();
+      } else {
+        room.players.push({ nickname: sanitize(nickname, 30), role, vote: null, lastSeen: Date.now() });
       }
       break;
     }
@@ -44,7 +63,13 @@ export async function POST(
       const player = room.players.find((p) => p.nickname === nickname);
       if (player && player.role === "dev" && !room.revealed) {
         player.vote = vote;
+        player.lastSeen = Date.now();
       }
+      break;
+    }
+    case "heartbeat": {
+      const { nickname } = body as { nickname: string };
+      touchPlayer(room, nickname);
       break;
     }
     case "reveal": {
@@ -57,5 +82,10 @@ export async function POST(
     }
   }
 
-  return NextResponse.json(room);
+  const sanitizedRoom = {
+    players: room.players.map(({ nickname, role, vote }) => ({ nickname, role, vote })),
+    revealed: room.revealed,
+  };
+
+  return NextResponse.json(sanitizedRoom);
 }

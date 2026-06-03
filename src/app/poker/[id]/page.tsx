@@ -152,17 +152,21 @@ export default function PokerRoom({
   const pollRoom = useCallback(async () => {
     if (!roomId) return;
     try {
-      const res = await fetch(`/api/poker/${roomId}`);
+      // Send heartbeat to keep player alive
+      const res = await fetch(`/api/poker/${roomId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "heartbeat", nickname }),
+      });
       if (!res.ok) return;
       const text = await res.text();
-      // Skip setState if nothing changed
       if (text === lastJsonRef.current) return;
       lastJsonRef.current = text;
       setRoom(JSON.parse(text));
     } catch {
       // Network error, skip
     }
-  }, [roomId]);
+  }, [roomId, nickname]);
 
   // Sound effects — only triggered on actual revealed state transition
   useEffect(() => {
