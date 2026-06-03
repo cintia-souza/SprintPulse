@@ -4,23 +4,18 @@ import {
   generateCardId,
   CardColumn,
   setRetroRoom,
-  touchRetroPlayer,
 } from "@/lib/retro-store";
 import { persistRetro, loadRetroFromDB } from "@/lib/retro-sync";
-import { rateLimit } from "@/lib/rate-limit";
 import { sanitize, isValidNickname } from "@/lib/sanitize";
 
-// Track which rooms have been loaded from DB (survives hot reload)
-const globalForLoaded = globalThis as unknown as { retroLoadedRooms?: Set<string> };
-if (!globalForLoaded.retroLoadedRooms) {
-  globalForLoaded.retroLoadedRooms = new Set();
-}
-const loadedRooms = globalForLoaded.retroLoadedRooms;
+// Track loaded rooms in globalThis to survive hot reload
+const g = globalThis as unknown as { _retroLoaded?: Set<string> };
+if (!g._retroLoaded) g._retroLoaded = new Set();
 
 async function ensureRoom(id: string) {
   const room = getRetroRoom(id);
-  if (!loadedRooms.has(id) && room.cards.length === 0 && room.players.length === 0) {
-    loadedRooms.add(id);
+  if (!g._retroLoaded!.has(id) && room.cards.length === 0 && room.players.length === 0) {
+    g._retroLoaded!.add(id);
     const fromDB = await loadRetroFromDB(id);
     if (fromDB) {
       room.cards = fromDB.cards;
@@ -35,37 +30,18 @@ async function ensureRoom(id: string) {
 }
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
-  if (!rateLimit(ip)) {
-    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-  }
   const { id } = await params;
   const room = await ensureRoom(id);
-
-  // Strip lastSeen from response
-  return NextResponse.json({
-    squad: room.squad,
-    players: room.players.map(({ nickname, role, votesRemaining, votedCardIds }) => ({
-      nickname, role, votesRemaining, votedCardIds,
-    })),
-    cards: room.cards,
-    revealedColumns: room.revealedColumns,
-    votingOpen: room.votingOpen,
-    phase: room.phase,
-  });
+  return NextResponse.json(room);
 }
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const ip = req.headers.get("x-forwarded-for") || "unknown";
-  if (!rateLimit(ip)) {
-    return NextResponse.json({ error: "Too many requests" }, { status: 429 });
-  }
   const { id } = await params;
   const room = await ensureRoom(id);
   const body = await req.json();
@@ -94,24 +70,15 @@ export async function POST(
       if (squad && room.players.length === 0) {
         room.squad = sanitize(squad, 50);
       }
-      const existing = room.players.find((p) => p.nickname === nickname);
-      if (existing) {
-        existing.lastSeen = Date.now();
-      } else {
+      // Idempotent join - if player exists, just skip
+      if (!room.players.find((p) => p.nickname === nickname)) {
         room.players.push({
           nickname: sanitize(nickname, 30),
           role,
           votesRemaining: 5,
           votedCardIds: [],
-          lastSeen: Date.now(),
         });
       }
-      break;
-    }
-
-    case "heartbeat": {
-      const { nickname } = body as { nickname: string };
-      touchRetroPlayer(room, nickname);
       break;
     }
 
@@ -125,7 +92,6 @@ export async function POST(
       if (!validColumns.includes(column)) {
         return NextResponse.json({ error: "Coluna inválida" }, { status: 400 });
       }
-      touchRetroPlayer(room, nickname);
       const sanitizedContent = sanitize(content, 500);
       if (sanitizedContent) {
         room.cards.push({
@@ -169,7 +135,6 @@ export async function POST(
         card.votes++;
         player.votesRemaining--;
         player.votedCardIds.push(cardId);
-        player.lastSeen = Date.now();
       }
       break;
     }
@@ -233,15 +198,5 @@ export async function POST(
     }
   }
 
-  // Strip lastSeen from response
-  return NextResponse.json({
-    squad: room.squad,
-    players: room.players.map(({ nickname, role, votesRemaining, votedCardIds }) => ({
-      nickname, role, votesRemaining, votedCardIds,
-    })),
-    cards: room.cards,
-    revealedColumns: room.revealedColumns,
-    votingOpen: room.votingOpen,
-    phase: room.phase,
-  });
+  return NextResponse.json(room);
 }

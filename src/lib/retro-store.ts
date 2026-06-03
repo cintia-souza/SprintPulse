@@ -1,5 +1,5 @@
 // In-memory ephemeral store for retro rooms
-// Uses globalThis to survive Next.js hot reloads in dev
+// Uses globalThis to survive Next.js hot reloads
 
 export type CardColumn = "WENT_WELL" | "IMPROVE" | "ACTION_ITEMS";
 export type Phase = "writing" | "revealed" | "voting" | "done";
@@ -19,7 +19,6 @@ export interface RetroPlayer {
   role: "host" | "member";
   votesRemaining: number;
   votedCardIds: string[];
-  lastSeen: number;
 }
 
 export interface RetroRoom {
@@ -45,12 +44,6 @@ if (!globalForRetro.retroCardCounter) {
 
 const rooms = globalForRetro.retroRooms;
 
-// Remove players inactive for 30s
-function cleanStale(room: RetroRoom) {
-  const now = Date.now();
-  room.players = room.players.filter((p) => now - p.lastSeen < 30_000);
-}
-
 export function getRetroRoom(id: string): RetroRoom {
   if (!rooms.has(id)) {
     rooms.set(id, {
@@ -62,18 +55,11 @@ export function getRetroRoom(id: string): RetroRoom {
       phase: "writing",
     });
   }
-  const room = rooms.get(id)!;
-  cleanStale(room);
-  return room;
+  return rooms.get(id)!;
 }
 
 export function setRetroRoom(id: string, room: RetroRoom) {
   rooms.set(id, room);
-}
-
-export function touchRetroPlayer(room: RetroRoom, nickname: string) {
-  const player = room.players.find((p) => p.nickname === nickname);
-  if (player) player.lastSeen = Date.now();
 }
 
 export function generateCardId(): string {

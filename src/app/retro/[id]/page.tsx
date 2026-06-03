@@ -143,7 +143,6 @@ export default function RetroBoard({
   const prevPhase = useRef<Phase>("writing");
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const lastDataRef = useRef<string>("");
-  const pausePollRef = useRef(false);
 
   useEffect(() => {
     params.then((p) => {
@@ -160,22 +159,16 @@ export default function RetroBoard({
   }, [params]);
 
   const pollRoom = useCallback(async () => {
-    if (!roomId || !nickname || pausePollRef.current) return;
+    if (!roomId) return;
     try {
-      const res = await fetch(`/api/retro/room/${roomId}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "heartbeat", nickname }),
-      });
-      if (res.ok) {
-        const text = await res.text();
-        if (text !== lastDataRef.current) {
-          lastDataRef.current = text;
-          setRoom(JSON.parse(text));
-        }
-      }
+      const res = await fetch(`/api/retro/room/${roomId}`);
+      if (!res.ok) return;
+      const text = await res.text();
+      if (text === lastDataRef.current) return;
+      lastDataRef.current = text;
+      setRoom(JSON.parse(text));
     } catch {}
-  }, [roomId, nickname]);
+  }, [roomId]);
 
   // Sound on phase transitions
   useEffect(() => {
@@ -196,15 +189,12 @@ export default function RetroBoard({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "join", nickname, role }),
     }).then(() => pollRoom());
-    pollRef.current = setInterval(pollRoom, 2000);
+    pollRef.current = setInterval(pollRoom, 3000);
     return () => clearInterval(pollRef.current);
   }, [joined, roomId, pollRoom, nickname, role]);
 
-  // Envia ação e atualiza com a resposta do servidor (sem poll extra)
   const sendAction = useCallback(async (body: Record<string, unknown>) => {
     if (!roomId) return;
-    // Pausa o polling para evitar race condition
-    pausePollRef.current = true;
     try {
       const res = await fetch(`/api/retro/room/${roomId}`, {
         method: "POST",
@@ -216,10 +206,7 @@ export default function RetroBoard({
         lastDataRef.current = text;
         setRoom(JSON.parse(text));
       }
-    } finally {
-      // Retoma polling após um pequeno delay
-      setTimeout(() => { pausePollRef.current = false; }, 500);
-    }
+    } catch {}
   }, [roomId]);
 
   const handleJoin = async (e: React.FormEvent) => {
