@@ -69,9 +69,9 @@ export default function PokerRoom({ params }: { params: Promise<{ id: string }> 
     });
   }, [params]);
 
-  // Poll
+  // Poll - skip if tab hidden
   const poll = useCallback(async () => {
-    if (!roomId) return;
+    if (!roomId || document.hidden) return;
     try {
       const res = await fetch(`/api/poker/${roomId}`);
       if (!res.ok) return;
@@ -114,7 +114,15 @@ export default function PokerRoom({ params }: { params: Promise<{ id: string }> 
       body: JSON.stringify({ action: "join", nickname: nicknameRef.current, role: roleRef.current }),
     }).then(() => poll());
     pollTimer.current = setInterval(poll, 2000);
-    return () => clearInterval(pollTimer.current);
+
+    // Ao voltar ao foco, faz poll imediato
+    const onVisibility = () => { if (!document.hidden) poll(); };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      clearInterval(pollTimer.current);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [joined, roomId, poll]);
 
   // Send action

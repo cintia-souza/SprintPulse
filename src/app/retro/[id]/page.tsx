@@ -143,23 +143,32 @@ export default function RetroBoard({
   const prevPhase = useRef<Phase>("writing");
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
   const lastDataRef = useRef<string>("");
+  const nicknameRef = useRef("");
+  const roleRef = useRef<"host" | "member">("member");
 
   useEffect(() => {
     params.then((p) => {
       setRoomId(p.id);
-      // Restaurar sessão do sessionStorage ao carregar
       const saved = sessionStorage.getItem(`retro_session_${p.id}`);
       if (saved) {
-        const { nickname: n, role: r } = JSON.parse(saved);
-        setNickname(n);
-        setRole(r);
-        setJoined(true);
+        try {
+          const { nickname: n, role: r } = JSON.parse(saved);
+          if (n) {
+            setNickname(n);
+            setRole(r);
+            nicknameRef.current = n;
+            roleRef.current = r;
+            setJoined(true);
+          }
+        } catch { /* ignore */ }
       }
     });
   }, [params]);
 
   const pollRoom = useCallback(async () => {
     if (!roomId) return;
+    // Não pollar se a aba está inativa
+    if (document.hidden) return;
     try {
       const res = await fetch(`/api/retro/room/${roomId}`);
       if (!res.ok) return;
@@ -167,7 +176,7 @@ export default function RetroBoard({
       if (text === lastDataRef.current) return;
       lastDataRef.current = text;
       setRoom(JSON.parse(text));
-    } catch {}
+    } catch { /* skip */ }
   }, [roomId]);
 
   // Sound on phase transitions
@@ -182,16 +191,27 @@ export default function RetroBoard({
   }, [room.phase]);
 
   useEffect(() => {
-    if (!joined || !roomId) return;
-    // Re-join silencioso ao reconectar (garante que o servidor tem o player)
+    if (!joined || !roomId || !nicknameRef.current) return;
+    // Re-join silencioso (idempotent no servidor)
     fetch(`/api/retro/room/${roomId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "join", nickname, role }),
+      body: JSON.stringify({ action: "join", nickname: nicknameRef.current, role: roleRef.current }),
     }).then(() => pollRoom());
-    pollRef.current = setInterval(pollRoom, 3000);
-    return () => clearInterval(pollRef.current);
-  }, [joined, roomId, pollRoom, nickname, role]);
+    pollRef.current = setInterval(pollRoom, 2000);
+
+    // Ao voltar ao foco, faz um poll imediato
+    const onFocus = () => pollRoom();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) pollRoom();
+    });
+
+    return () => {
+      clearInterval(pollRef.current);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [joined, roomId, pollRoom]);
 
   const sendAction = useCallback(async (body: Record<string, unknown>) => {
     if (!roomId) return;
@@ -224,7 +244,8 @@ export default function RetroBoard({
       setJoinError(data.error || "Erro ao entrar na sala");
       return;
     }
-    // Salvar sessão no sessionStorage
+    nicknameRef.current = nickname.trim();
+    roleRef.current = role;
     sessionStorage.setItem(`retro_session_${roomId}`, JSON.stringify({ nickname: nickname.trim(), role }));
     setJoined(true);
   };
@@ -253,18 +274,18 @@ export default function RetroBoard({
     const content = drafts[column];
     if (!content.trim()) return;
     playSound("card");
-    sendAction({ action: "add-card", nickname, column, content });
+    sendAction({ action: "add-card", nickname: nicknameRef.current, column, content });
     setDrafts((d) => ({ ...d, [column]: "" }));
   };
 
   const vote = (cardId: string) => {
-    const me = room.players.find((p) => p.nickname === nickname);
+    const me = room.players.find((p) => p.nickname === nicknameRef.current);
     if (!me || me.votesRemaining <= 0 || !room.votingOpen || me.votedCardIds.includes(cardId)) return;
     playSound("vote");
-    sendAction({ action: "vote", nickname, cardId });
+    sendAction({ action: "vote", nickname: nicknameRef.current, cardId });
   };
 
-  const currentPlayer = room.players.find((p) => p.nickname === nickname);
+  const currentPlayer = room.players.find((p) => p.nickname === nicknameRef.current);
   const isHost = role === "host";
 
   // Phase label
@@ -523,7 +544,7 @@ export default function RetroBoard({
               {/* Cards */}
               <div className="space-y-2 max-h-[55vh] overflow-y-auto">
                 {columnCards.map((card) => {
-                  const isMine = card.author === nickname;
+                  const isMine = card.author === nicknameRef.current;
                   // ACTION_ITEMS é sempre visível; demais só após revelar ou se for do próprio autor
                   const canSee = col.key === "ACTION_ITEMS" || isRevealed || isMine;
 
