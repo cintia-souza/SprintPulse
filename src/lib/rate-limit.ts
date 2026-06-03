@@ -22,9 +22,10 @@ export function rateLimit(ip: string): boolean {
 }
 
 // Cleanup stale entries periodically
-setInterval(() => {
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, val] of requests) {
     if (now > val.resetAt) requests.delete(key);
   }
 }, WINDOW_MS);
+cleanupInterval.unref();
