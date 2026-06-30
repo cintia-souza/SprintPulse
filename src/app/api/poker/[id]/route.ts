@@ -90,6 +90,15 @@ export async function POST(
       });
       break;
     }
+    case "kick": {
+      const { nickname } = body as { nickname: string };
+      if (nickname) {
+        await prisma.pokerPlayer.deleteMany({
+          where: { roomId: id, nickname },
+        });
+      }
+      break;
+    }
   }
 
   const updatedRoom = await getOrCreateRoom(id);

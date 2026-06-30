@@ -200,7 +200,17 @@ export default function PokerRoom({ params }: { params: Promise<{ id: string }> 
           </div>
           <div className="flex flex-wrap justify-center gap-5">
             {room.players.map((p) => (
-              <div key={p.nickname} className="flex flex-col items-center gap-2">
+              <div key={p.nickname} className="flex flex-col items-center gap-2 relative group">
+                {/* Botão remover (visível apenas para host e não em si mesmo) */}
+                {role === "host" && p.nickname !== nickname && (
+                  <button
+                    onClick={() => send({ action: "kick", nickname: p.nickname })}
+                    className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500 hover:scale-110 z-10"
+                    title={`Remover ${p.nickname}`}
+                  >
+                    ✕
+                  </button>
+                )}
                 <div className={`w-16 h-24 transition-all duration-500 ${flipCards && p.role === "dev" ? "animate-flip" : ""}`}>
                   <div className={`w-full h-full rounded-xl border-2 flex items-center justify-center font-mono text-xl font-bold shadow-lg transition-all duration-300 ${p.role === "host" ? "border-amber-500/40 bg-gradient-to-b from-amber-500/10 to-amber-500/5 text-amber-500/70" : room.revealed && p.vote !== null ? "border-emerald-400 bg-gradient-to-b from-emerald-400/20 to-emerald-400/5 text-emerald-400 shadow-emerald-400/20" : p.vote !== null ? "border-cyan-400 bg-gradient-to-b from-cyan-400/15 to-cyan-400/5 text-cyan-400 shadow-cyan-400/10" : "border-slate-700 bg-slate-800/80 text-slate-600"}`}>
                     {p.role === "host" ? "🎯" : room.revealed ? (p.vote ?? "—") : p.vote !== null ? "✓" : "?"}
