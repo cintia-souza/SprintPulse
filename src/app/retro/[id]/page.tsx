@@ -8,8 +8,8 @@ type Phase = "writing" | "revealed" | "voting" | "done";
 interface RetroCard {
   id: string;
   column: CardColumn;
-  content: string;
-  author: string;
+  content: string | null;  // null quando oculto (servidor mascara)
+  author: string | null;
   votes: number;
   completed: boolean;
   migratedTo?: string | null;
@@ -166,11 +166,13 @@ export default function RetroBoard({
   }, [params]);
 
   const pollRoom = useCallback(async () => {
-    if (!roomId) return;
-    // Não pollar se a aba está inativa
-    if (document.hidden) return;
+    if (!roomId || document.hidden) return;
     try {
-      const res = await fetch(`/api/retro/room/${roomId}`);
+      const nick = nicknameRef.current;
+      const url = nick
+        ? `/api/retro/room/${roomId}?nickname=${encodeURIComponent(nick)}`
+        : `/api/retro/room/${roomId}`;
+      const res = await fetch(url);
       if (!res.ok) return;
       const text = await res.text();
       if (text === lastDataRef.current) return;
@@ -268,6 +270,18 @@ export default function RetroBoard({
     if (!migrateTarget.trim()) return;
     sendAction({ action: "migrate-action", cardId: migrateModal.cardId, targetRoomId: migrateTarget.trim() });
     setMigrateModal({ open: false, cardId: "" });
+  };
+
+  const [editingCard, setEditingCard] = useState<{ id: string; content: string } | null>(null);
+
+  const editCard = (cardId: string, newContent: string) => {
+    if (!newContent.trim()) return;
+    sendAction({ action: "edit-card", nickname: nicknameRef.current, cardId, content: newContent });
+    setEditingCard(null);
+  };
+
+  const deleteCard = (cardId: string) => {
+    sendAction({ action: "delete-card", nickname: nicknameRef.current, cardId });
   };
 
   const addCard = (column: CardColumn) => {
@@ -544,18 +558,19 @@ export default function RetroBoard({
               {/* Cards */}
               <div className="space-y-2 max-h-[55vh] overflow-y-auto">
                 {columnCards.map((card) => {
-                  const isMine = card.author === nicknameRef.current;
-                  // ACTION_ITEMS é sempre visível; demais só após revelar ou se for do próprio autor
-                  const canSee = col.key === "ACTION_ITEMS" || isRevealed || isMine;
+                  // Servidor já mascara: content null = card oculto
+                  const isHidden = card.content === null;
+                  const isMine = !isHidden && card.author === nicknameRef.current;
+                  const isRevealed = room.revealedColumns.includes(col.key);
+                  const canEdit = isMine && !isRevealed && room.phase !== "done";
+                  const isEditing = editingCard?.id === card.id;
 
-                  // Card virado (não revelado e não é meu)
-                  if (!canSee) {
+                  if (isHidden) {
                     return (
                       <div
                         key={card.id}
                         className="relative h-20 rounded-xl border-2 border-slate-700 bg-gradient-to-br from-slate-800 to-slate-900 flex items-center justify-center overflow-hidden"
                       >
-                        {/* Pattern decorativo */}
                         <div className="absolute inset-0 opacity-10">
                           <div className="absolute inset-2 border border-slate-500 rounded-lg" />
                           <div className="absolute inset-4 border border-slate-600 rounded-md" />
@@ -565,7 +580,6 @@ export default function RetroBoard({
                     );
                   }
 
-                  // Card revelado ou próprio
                   return (
                     <div
                       key={card.id}
@@ -577,46 +591,97 @@ export default function RetroBoard({
                             : "border-slate-700/50"
                       }`}
                     >
-                      <p className="text-sm text-slate-200 whitespace-pre-wrap">
-                        {card.content}
-                      </p>
+                      {/* Modo edição inline */}
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          <textarea
+                            autoFocus
+                            value={editingCard.content}
+                            onChange={(e) => setEditingCard({ id: card.id, content: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); editCard(card.id, editingCard.content); }
+                              if (e.key === "Escape") setEditingCard(null);
+                            }}
+                            className="w-full bg-slate-700 border border-cyan-400/50 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-cyan-400/60 resize-none"
+                            rows={2}
+                          />
+                          <div className="flex gap-2 justify-end">
+                            <button
+                              onClick={() => setEditingCard(null)}
+                              className="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 rounded transition-colors"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              onClick={() => editCard(card.id, editingCard.content)}
+                              className="text-xs bg-cyan-400/10 border border-cyan-400/40 text-cyan-400 hover:bg-cyan-400/20 px-3 py-1 rounded transition-colors"
+                            >
+                              Salvar
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-slate-200 whitespace-pre-wrap">{card.content}</p>
+                      )}
 
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-slate-500 font-mono">
+                        <div className="flex items-center gap-2">
                           {isMine && !isRevealed && (
-                            <span className="text-cyan-400/70 italic">seu card</span>
+                            <span className="text-xs text-cyan-400/70 italic font-mono">seu card</span>
                           )}
-                        </span>
+                        </div>
 
-                        {/* Vote button */}
-                        {(room.votingOpen || room.phase === "done") && isRevealed && (
-                          (() => {
-                            const alreadyVoted = currentPlayer?.votedCardIds.includes(card.id);
-                            const canVoteThis = room.votingOpen && currentPlayer && currentPlayer.votesRemaining > 0 && !alreadyVoted;
-                            return (
+                        <div className="flex items-center gap-2">
+                          {/* Botões editar/excluir (só antes de revelar, só o autor) */}
+                          {canEdit && !isEditing && (
+                            <>
                               <button
-                                onClick={() => vote(card.id)}
-                                disabled={!canVoteThis}
-                                className={`flex items-center gap-1 text-xs font-mono transition-all ${
-                                  room.phase === "done"
-                                    ? "text-emerald-400 cursor-default"
-                                    : alreadyVoted
-                                      ? "text-emerald-400/60 cursor-not-allowed"
-                                      : canVoteThis
-                                        ? "text-amber-500 hover:text-amber-400 hover:scale-110 active:scale-95"
-                                        : "text-slate-600 cursor-not-allowed"
-                                }`}
+                                onClick={() => setEditingCard({ id: card.id, content: card.content! })}
+                                className="text-xs text-slate-500 hover:text-cyan-400 transition-colors font-mono"
+                                title="Editar"
                               >
-                                {card.votes > 0 && (
-                                  <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold">
-                                    {card.votes}
-                                  </span>
-                                )}
-                                {room.votingOpen && (alreadyVoted ? "✓" : "▲")}
+                                ✏️
                               </button>
-                            );
-                          })()
-                        )}
+                              <button
+                                onClick={() => deleteCard(card.id)}
+                                className="text-xs text-slate-500 hover:text-red-400 transition-colors font-mono"
+                                title="Excluir"
+                              >
+                                🗑️
+                              </button>
+                            </>
+                          )}
+
+                          {/* Botão de voto */}
+                          {(room.votingOpen || room.phase === "done") && isRevealed && (
+                            (() => {
+                              const alreadyVoted = currentPlayer?.votedCardIds.includes(card.id);
+                              const canVoteThis = room.votingOpen && currentPlayer && currentPlayer.votesRemaining > 0 && !alreadyVoted;
+                              return (
+                                <button
+                                  onClick={() => vote(card.id)}
+                                  disabled={!canVoteThis}
+                                  className={`flex items-center gap-1 text-xs font-mono transition-all ${
+                                    room.phase === "done"
+                                      ? "text-emerald-400 cursor-default"
+                                      : alreadyVoted
+                                        ? "text-emerald-400/60 cursor-not-allowed"
+                                        : canVoteThis
+                                          ? "text-amber-500 hover:text-amber-400 hover:scale-110 active:scale-95"
+                                          : "text-slate-600 cursor-not-allowed"
+                                  }`}
+                                >
+                                  {card.votes > 0 && (
+                                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold">
+                                      {card.votes}
+                                    </span>
+                                  )}
+                                  {room.votingOpen && (alreadyVoted ? "✓" : "▲")}
+                                </button>
+                              );
+                            })()
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -802,23 +867,56 @@ export default function RetroBoard({
           Participantes
         </h3>
         <div className="flex flex-wrap gap-2">
-          {room.players.map((p) => (
-            <div
-              key={p.nickname}
-              className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5"
-            >
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-xs text-slate-300 font-mono">{p.nickname}</span>
-              <span className="text-[10px] text-slate-500">
-                {p.role === "host" ? "🎯" : "💻"}
-              </span>
-              {room.votingOpen && (
-                <span className="text-[10px] text-amber-500 font-mono">
-                  {p.votesRemaining}🗳️
+          {room.players.map((p) => {
+            const isMe = p.nickname === nicknameRef.current;
+            const canManage = isHost && !isMe;
+            const targetIsHost = p.role === "host";
+            const hostCount = room.players.filter((x) => x.role === "host").length;
+
+            return (
+              <div
+                key={p.nickname}
+                className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs text-slate-300 font-mono">{p.nickname}</span>
+                <span className="text-[10px] text-slate-500">
+                  {p.role === "host" ? "🎯" : "💻"}
                 </span>
-              )}
-            </div>
-          ))}
+                {room.votingOpen && (
+                  <span className="text-[10px] text-amber-500 font-mono">
+                    {p.votesRemaining}🗳️
+                  </span>
+                )}
+
+                {/* Controles de host */}
+                {canManage && (
+                  <div className="flex gap-1 ml-1">
+                    {/* Promover a host (se ainda tem vaga) */}
+                    {!targetIsHost && hostCount < 2 && (
+                      <button
+                        onClick={() => sendAction({ action: "promote-to-host", fromNickname: nicknameRef.current, toNickname: p.nickname })}
+                        title="Promover a Host"
+                        className="text-[10px] bg-amber-500/10 border border-amber-500/30 text-amber-500 px-1.5 py-0.5 rounded font-mono hover:bg-amber-500/20 transition-colors"
+                      >
+                        +Host
+                      </button>
+                    )}
+                    {/* Transferir controle (vira membro, alvo vira host) */}
+                    {!targetIsHost && (
+                      <button
+                        onClick={() => sendAction({ action: "transfer-host", fromNickname: nicknameRef.current, toNickname: p.nickname })}
+                        title="Transferir controle"
+                        className="text-[10px] bg-cyan-400/10 border border-cyan-400/30 text-cyan-400 px-1.5 py-0.5 rounded font-mono hover:bg-cyan-400/20 transition-colors"
+                      >
+                        Transferir
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </section>
     </div>

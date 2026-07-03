@@ -10,7 +10,12 @@ async function getOrCreateSession(roomId: string) {
   });
 }
 
-function formatRoom(session: Awaited<ReturnType<typeof getOrCreateSession>>) {
+function formatRoom(
+  session: Awaited<ReturnType<typeof getOrCreateSession>>,
+  requesterNickname?: string
+) {
+  const revealedColumns = session.revealedColumns;
+
   return {
     players: session.players.map((p) => ({
       nickname: p.nickname,
@@ -18,28 +23,36 @@ function formatRoom(session: Awaited<ReturnType<typeof getOrCreateSession>>) {
       votesRemaining: p.votesRemaining,
       votedCardIds: p.votedCardIds,
     })),
-    cards: session.cards.map((c) => ({
-      id: c.id,
-      column: c.column,
-      content: c.content,
-      author: c.author,
-      votes: c.votes,
-      completed: c.completed,
-      migratedTo: c.migratedTo,
-    })),
-    revealedColumns: session.revealedColumns,
+    cards: session.cards.map((c) => {
+      const isRevealed = revealedColumns.includes(c.column);
+      const isMine = requesterNickname && c.author === requesterNickname;
+      // ACTION_ITEMS sempre visível; demais só após revelar ou se for do próprio autor
+      const canSee = c.column === "ACTION_ITEMS" || isRevealed || isMine;
+      return {
+        id: c.id,
+        column: c.column,
+        content: canSee ? c.content : null,   // null = card oculto
+        author: canSee ? c.author : null,      // null = anônimo
+        votes: c.votes,
+        completed: c.completed,
+        migratedTo: c.migratedTo,
+      };
+    }),
+    revealedColumns,
     votingOpen: session.votingOpen,
     phase: session.phase,
   };
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  // Nickname passado como query param para mascarar cards no GET
+  const nickname = req.nextUrl.searchParams.get("nickname") || undefined;
   const session = await getOrCreateSession(id);
-  return NextResponse.json(formatRoom(session));
+  return NextResponse.json(formatRoom(session, nickname));
 }
 
 export async function POST(
@@ -59,25 +72,25 @@ export async function POST(
       const cleanNick = nickname.trim().slice(0, 30);
       const validRole = role === "host" ? "host" : "member";
 
-      // Só host pode criar sala (ser o primeiro)
+      // Primeiro a entrar deve ser host
       if (session.players.length === 0 && validRole !== "host") {
         return NextResponse.json(
           { error: "Somente o Host (PM/TL) pode criar a sala" },
           { status: 403 }
         );
       }
-      // Impedir múltiplos hosts
-      if (validRole === "host" && session.players.some((p) => p.role === "host")) {
-        // Se é re-join do mesmo host, OK
-        if (!session.players.some((p) => p.nickname === cleanNick && p.role === "host")) {
+      // Máximo 2 hosts por sala
+      const hostCount = session.players.filter((p) => p.role === "host").length;
+      if (validRole === "host" && hostCount >= 2) {
+        const isRejoin = session.players.some((p) => p.nickname === cleanNick && p.role === "host");
+        if (!isRejoin) {
           return NextResponse.json(
-            { error: "Já existe um Host nesta sala" },
+            { error: "Já existem 2 Hosts nesta sala (limite máximo)" },
             { status: 403 }
           );
         }
       }
 
-      // Set squad on first join
       if (squad && session.players.length === 0) {
         await prisma.retroSession.update({
           where: { id: session.id },
@@ -89,6 +102,46 @@ export async function POST(
         where: { sessionId_nickname: { sessionId: session.id, nickname: cleanNick } },
         create: { sessionId: session.id, nickname: cleanNick, role: validRole },
         update: {},
+      });
+      break;
+    }
+
+    case "transfer-host": {
+      // Um host passa o papel de host para um membro
+      const { fromNickname, toNickname } = body as { fromNickname: string; toNickname: string };
+      const requester = session.players.find((p) => p.nickname === fromNickname && p.role === "host");
+      const target = session.players.find((p) => p.nickname === toNickname);
+      if (!requester || !target) break;
+      // Rebaixa quem transfere para membro, promove o alvo para host
+      await prisma.$transaction([
+        prisma.retroPlayer.update({
+          where: { id: requester.id },
+          data: { role: "member" },
+        }),
+        prisma.retroPlayer.update({
+          where: { id: target.id },
+          data: { role: "host" },
+        }),
+      ]);
+      break;
+    }
+
+    case "promote-to-host": {
+      // Um host promove um membro a host (sem perder o próprio papel)
+      const { fromNickname, toNickname } = body as { fromNickname: string; toNickname: string };
+      const requester = session.players.find((p) => p.nickname === fromNickname && p.role === "host");
+      const target = session.players.find((p) => p.nickname === toNickname && p.role === "member");
+      if (!requester || !target) break;
+      const hostCount = session.players.filter((p) => p.role === "host").length;
+      if (hostCount >= 2) {
+        return NextResponse.json(
+          { error: "Já existem 2 Hosts nesta sala" },
+          { status: 400 }
+        );
+      }
+      await prisma.retroPlayer.update({
+        where: { id: target.id },
+        data: { role: "host" },
       });
       break;
     }
@@ -105,6 +158,30 @@ export async function POST(
           author: (nickname || "").trim().slice(0, 30),
         },
       });
+      break;
+    }
+
+    case "edit-card": {
+      const { nickname, cardId, content } = body as { nickname: string; cardId: string; content: string };
+      const card = session.cards.find((c) => c.id === cardId);
+      // Só o autor pode editar, e apenas antes de ser revelado
+      if (!card || card.author !== nickname.trim()) break;
+      if (session.revealedColumns.includes(card.column)) break;
+      if (!content?.trim()) break;
+      await prisma.retroCard.update({
+        where: { id: cardId },
+        data: { content: content.trim().slice(0, 500) },
+      });
+      break;
+    }
+
+    case "delete-card": {
+      const { nickname, cardId } = body as { nickname: string; cardId: string };
+      const card = session.cards.find((c) => c.id === cardId);
+      // Só o autor pode excluir, e apenas antes de ser revelado
+      if (!card || card.author !== nickname.trim()) break;
+      if (session.revealedColumns.includes(card.column)) break;
+      await prisma.retroCard.delete({ where: { id: cardId } });
       break;
     }
 
@@ -236,7 +313,8 @@ export async function POST(
     }
   }
 
-  // Return fresh state
+  // Return fresh state masked for the requester
+  const requesterNickname = (body.nickname as string | undefined) || undefined;
   const updated = await getOrCreateSession(id);
-  return NextResponse.json(formatRoom(updated));
+  return NextResponse.json(formatRoom(updated, requesterNickname));
 }

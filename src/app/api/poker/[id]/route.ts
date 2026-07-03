@@ -90,6 +90,21 @@ export async function POST(
       });
       break;
     }
+    case "transfer-host": {
+      const { fromNickname, toNickname } = body as { fromNickname: string; toNickname: string };
+      await prisma.pokerPlayer.updateMany({ where: { roomId: id, nickname: fromNickname }, data: { role: "dev" } });
+      await prisma.pokerPlayer.updateMany({ where: { roomId: id, nickname: toNickname }, data: { role: "host" } });
+      break;
+    }
+    case "promote-to-host": {
+      const { toNickname } = body as { toNickname: string };
+      const room = await prisma.pokerRoom.findUnique({ where: { roomId: id }, include: { players: true } });
+      const hostCount = room?.players.filter((p) => p.role === "host").length ?? 0;
+      if (hostCount < 2) {
+        await prisma.pokerPlayer.updateMany({ where: { roomId: id, nickname: toNickname }, data: { role: "host" } });
+      }
+      break;
+    }
     case "kick": {
       const { nickname } = body as { nickname: string };
       if (nickname) {

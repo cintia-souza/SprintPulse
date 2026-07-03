@@ -216,9 +216,32 @@ export default function PokerRoom({ params }: { params: Promise<{ id: string }> 
                     {p.role === "host" ? "🎯" : room.revealed ? (p.vote ?? "—") : p.vote !== null ? "✓" : "?"}
                   </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                  <span className="text-xs text-slate-400 font-mono truncate max-w-[80px]">{p.nickname}</span>
+                <div className="flex flex-col items-center gap-1">
+                  <div className="flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    <span className="text-xs text-slate-400 font-mono truncate max-w-[80px]">{p.nickname}</span>
+                  </div>
+                  {/* Controles de host para outros players */}
+                  {role === "host" && p.nickname !== nickname && p.role !== "host" && (
+                    <div className="flex gap-1 mt-0.5">
+                      {room.players.filter((x) => x.role === "host").length < 2 && (
+                        <button
+                          onClick={() => send({ action: "promote-to-host", toNickname: p.nickname })}
+                          title="Promover a Host"
+                          className="text-[9px] bg-amber-500/10 border border-amber-500/30 text-amber-500 px-1 py-0.5 rounded font-mono hover:bg-amber-500/20 transition-colors"
+                        >
+                          +Host
+                        </button>
+                      )}
+                      <button
+                        onClick={() => send({ action: "transfer-host", fromNickname: nicknameRef.current, toNickname: p.nickname })}
+                        title="Transferir controle"
+                        className="text-[9px] bg-cyan-400/10 border border-cyan-400/30 text-cyan-400 px-1 py-0.5 rounded font-mono hover:bg-cyan-400/20 transition-colors"
+                      >
+                        Transferir
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
