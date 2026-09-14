@@ -14,7 +14,6 @@ const jsonLd = {
 };
 
 interface SessionItem {
-  id: string;
   roomId: string;
   squad: string;
   phase: string;
@@ -114,7 +113,7 @@ export default function Home() {
           <div className="space-y-2 max-h-[40vh] overflow-y-auto">
             {filteredSessions.map((s) => (
               <button
-                key={s.id}
+                key={s.roomId}
                 onClick={() => router.push(`/retro/${s.roomId}`)}
                 className="w-full flex items-center justify-between bg-slate-900/80 border border-slate-700/50 rounded-lg px-4 py-3 hover:border-slate-500 hover:bg-slate-800/80 transition-all text-left"
               >

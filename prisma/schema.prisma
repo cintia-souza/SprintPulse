@@ -67,7 +67,7 @@ model RetroCard {
   session    RetroSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   column     CardColumn
   content    String
-  author     String
+  authorKey  String       @default("")
   votes      Int          @default(0)
   completed  Boolean      @default(false)
   migratedTo String?

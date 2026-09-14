@@ -1,5 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getViewer, type Viewer } from "@/lib/auth";
+import { toPublicCard } from "@/lib/retro-visibility";
+
+const COLUMNS = ["WENT_WELL", "IMPROVE", "ACTION_ITEMS"] as const;
+type Column = (typeof COLUMNS)[number];
+
+function isColumn(value: unknown): value is Column {
+  return typeof value === "string" && (COLUMNS as readonly string[]).includes(value);
+}
+
+// Resposta é personalizada por viewer — nunca pode ser cacheada e servida a outro.
+const NO_STORE = { "Cache-Control": "private, no-store" };
 
 async function getOrCreateSession(roomId: string) {
   return prisma.retroSession.upsert({
@@ -12,47 +24,36 @@ async function getOrCreateSession(roomId: string) {
 
 function formatRoom(
   session: Awaited<ReturnType<typeof getOrCreateSession>>,
-  requesterNickname?: string
+  viewer: Viewer
 ) {
-  const revealedColumns = session.revealedColumns;
-
   return {
     players: session.players.map((p) => ({
       nickname: p.nickname,
       role: p.role,
       votesRemaining: p.votesRemaining,
-      votedCardIds: p.votedCardIds,
+      // Em quem cada um votou é privado: só o próprio jogador recebe a lista.
+      votedCardIds:
+        viewer && p.nickname === viewer.nickname ? p.votedCardIds : [],
     })),
-    cards: session.cards.map((c) => {
-      const isRevealed = revealedColumns.includes(c.column);
-      const isMine = requesterNickname && c.author === requesterNickname;
-      // ACTION_ITEMS sempre visível; demais só após revelar ou se for do próprio autor
-      const canSee = c.column === "ACTION_ITEMS" || isRevealed || isMine;
-      return {
-        id: c.id,
-        column: c.column,
-        content: canSee ? c.content : null,   // null = card oculto
-        author: canSee ? c.author : null,      // null = anônimo
-        votes: c.votes,
-        completed: c.completed,
-        migratedTo: c.migratedTo,
-      };
-    }),
-    revealedColumns,
+    // authorKey nunca sai daqui, e card virado vai sem o texto.
+    cards: session.cards.map((c) =>
+      toPublicCard(c, session.revealedColumns, viewer?.authorKey)
+    ),
+    revealedColumns: session.revealedColumns,
     votingOpen: session.votingOpen,
     phase: session.phase,
   };
 }
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  // Nickname passado como query param para mascarar cards no GET
-  const nickname = req.nextUrl.searchParams.get("nickname") || undefined;
   const session = await getOrCreateSession(id);
-  return NextResponse.json(formatRoom(session, nickname));
+  // Identidade vem do cookie assinado: ?nickname= era falsificável com um curl.
+  const viewer = await getViewer(session.id);
+  return NextResponse.json(formatRoom(session, viewer), { headers: NO_STORE });
 }
 
 export async function POST(
@@ -60,10 +61,17 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const body = await req.json();
+
+  let body: Record<string, unknown>;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Corpo inválido" }, { status: 400 });
+  }
 
   // Ensure session exists
   const session = await getOrCreateSession(id);
+  const viewer = await getViewer(session.id);
 
   switch (body.action) {
     case "join": {
@@ -147,25 +155,31 @@ export async function POST(
     }
 
     case "add-card": {
-      const { nickname, column, content } = body as { nickname: string; column: string; content: string };
-      const validColumns = ["WENT_WELL", "IMPROVE", "ACTION_ITEMS"];
-      if (!validColumns.includes(column) || !content?.trim()) break;
+      // Sem sessão não dá para marcar autoria, e sem autoria o autor não
+      // conseguiria reler o próprio card antes do reveal.
+      if (!viewer) {
+        return NextResponse.json({ error: "Entre na sala novamente" }, { status: 401 });
+      }
+      const { column, content } = body as { column: unknown; content?: string };
+      if (!isColumn(column) || !content?.trim()) break;
       await prisma.retroCard.create({
         data: {
           sessionId: session.id,
-          column: column as "WENT_WELL" | "IMPROVE" | "ACTION_ITEMS",
+          column,
           content: content.trim().slice(0, 500),
-          author: (nickname || "").trim().slice(0, 30),
+          authorKey: viewer.authorKey,
         },
       });
       break;
     }
 
     case "edit-card": {
-      const { nickname, cardId, content } = body as { nickname: string; cardId: string; content: string };
+      const { cardId, content } = body as { cardId: string; content: string };
       const card = session.cards.find((c) => c.id === cardId);
-      // Só o autor pode editar, e apenas antes de ser revelado
-      if (!card || card.author !== nickname.trim()) break;
+      // Só o autor pode editar, e apenas antes de ser revelado. A autoria vem
+      // do cookie: conferir contra um nickname do corpo deixava qualquer um
+      // editar o card alheio só mandando o nome da pessoa.
+      if (!card || !viewer || card.authorKey === "" || card.authorKey !== viewer.authorKey) break;
       if (session.revealedColumns.includes(card.column)) break;
       if (!content?.trim()) break;
       await prisma.retroCard.update({
@@ -176,17 +190,18 @@ export async function POST(
     }
 
     case "delete-card": {
-      const { nickname, cardId } = body as { nickname: string; cardId: string };
+      const { cardId } = body as { cardId: string };
       const card = session.cards.find((c) => c.id === cardId);
-      // Só o autor pode excluir, e apenas antes de ser revelado
-      if (!card || card.author !== nickname.trim()) break;
+      // Só o autor pode excluir, e apenas antes de ser revelado (autoria pelo cookie).
+      if (!card || !viewer || card.authorKey === "" || card.authorKey !== viewer.authorKey) break;
       if (session.revealedColumns.includes(card.column)) break;
       await prisma.retroCard.delete({ where: { id: cardId } });
       break;
     }
 
     case "reveal-column": {
-      const { column } = body as { column: string };
+      const { column } = body as { column: unknown };
+      if (!isColumn(column)) break;
       const current = session.revealedColumns;
       if (!current.includes(column)) {
         await prisma.retroSession.update({
@@ -286,7 +301,9 @@ export async function POST(
             sessionId: targetSession.id,
             column: "ACTION_ITEMS",
             content: card.content,
-            author: card.author,
+            // A ação migrada não tem dono: a chave do autor original é válida
+            // só na sala de origem, e não é reversível.
+            authorKey: "",
           },
         });
       }
@@ -313,8 +330,7 @@ export async function POST(
     }
   }
 
-  // Return fresh state masked for the requester
-  const requesterNickname = (body.nickname as string | undefined) || undefined;
+  // Return fresh state
   const updated = await getOrCreateSession(id);
-  return NextResponse.json(formatRoom(updated, requesterNickname));
+  return NextResponse.json(formatRoom(updated, viewer), { headers: NO_STORE });
 }
