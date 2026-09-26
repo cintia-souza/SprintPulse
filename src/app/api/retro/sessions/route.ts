@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
     where,
     orderBy: { createdAt: "desc" },
     select: {
-      id: true,
+      // `id` fica de fora: é ele que abre GET /api/retro/cards?sessionId=...
       roomId: true,
       squad: true,
       phase: true,

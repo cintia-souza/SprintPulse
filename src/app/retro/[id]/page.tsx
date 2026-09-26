@@ -8,8 +8,10 @@ type Phase = "writing" | "revealed" | "voting" | "done";
 interface RetroCard {
   id: string;
   column: CardColumn;
-  content: string | null;  // null quando oculto (servidor mascara)
-  author: string | null;
+  // Ausente quando o card está virado: o servidor não manda o texto.
+  content?: string;
+  // Quem é o autor nunca sai da API — só se o card é seu.
+  isMine: boolean;
   votes: number;
   completed: boolean;
   migratedTo?: string | null;
@@ -114,6 +116,21 @@ function playSound(type: "card" | "reveal" | "vote" | "done") {
   }
 }
 
+// Garante o cookie de sessão assinado (httpOnly). O servidor usa ele — e não o
+// nickname enviado no corpo — para decidir de quem é cada card.
+async function ensureSession(nick: string): Promise<boolean> {
+  try {
+    const res = await fetch("/api/auth/guest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nickname: nick }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export default function RetroBoard({
   params,
 }: {
@@ -168,11 +185,7 @@ export default function RetroBoard({
   const pollRoom = useCallback(async () => {
     if (!roomId || document.hidden) return;
     try {
-      const nick = nicknameRef.current;
-      const url = nick
-        ? `/api/retro/room/${roomId}?nickname=${encodeURIComponent(nick)}`
-        : `/api/retro/room/${roomId}`;
-      const res = await fetch(url);
+      const res = await fetch(`/api/retro/room/${roomId}`);
       if (!res.ok) return;
       const text = await res.text();
       if (text === lastDataRef.current) return;
@@ -194,35 +207,48 @@ export default function RetroBoard({
 
   useEffect(() => {
     if (!joined || !roomId || !nicknameRef.current) return;
-    // Re-join silencioso (idempotent no servidor)
-    fetch(`/api/retro/room/${roomId}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "join", nickname: nicknameRef.current, role: roleRef.current }),
-    }).then(() => pollRoom());
+    // Re-join silencioso (idempotent no servidor). Renova o cookie antes: sem
+    // ele o servidor não consegue dizer quais cards são seus.
+    ensureSession(nicknameRef.current)
+      .then(() =>
+        fetch(`/api/retro/room/${roomId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "join", nickname: nicknameRef.current, role: roleRef.current }),
+        })
+      )
+      .then(() => pollRoom());
     pollRef.current = setInterval(pollRoom, 2000);
 
     // Ao voltar ao foco, faz um poll imediato
     const onFocus = () => pollRoom();
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", () => {
+    const onVisibility = () => {
       if (!document.hidden) pollRoom();
-    });
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       clearInterval(pollRef.current);
       window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [joined, roomId, pollRoom]);
 
   const sendAction = useCallback(async (body: Record<string, unknown>) => {
     if (!roomId) return;
-    try {
-      const res = await fetch(`/api/retro/room/${roomId}`, {
+    const post = () =>
+      fetch(`/api/retro/room/${roomId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+    try {
+      let res = await post();
+      // Cookie expirado: renova e tenta de novo, senão o card sumiria calado.
+      if (res.status === 401 && nicknameRef.current) {
+        if (await ensureSession(nicknameRef.current)) res = await post();
+      }
       if (res.ok) {
         const text = await res.text();
         lastDataRef.current = text;
@@ -235,6 +261,14 @@ export default function RetroBoard({
     e.preventDefault();
     if (!nickname.trim() || !roomId) return;
     setJoinError("");
+
+    // Cookie httpOnly primeiro: é ele que carrega a identidade opaca usada para
+    // marcar a autoria dos cards no servidor.
+    if (!(await ensureSession(nickname.trim()))) {
+      setJoinError("Não foi possível iniciar a sessão");
+      return;
+    }
+
     const squad = typeof window !== "undefined" ? localStorage.getItem("sprintpulse_squad") || "" : "";
     const res = await fetch(`/api/retro/room/${roomId}`, {
       method: "POST",
@@ -559,8 +593,9 @@ export default function RetroBoard({
               <div className="space-y-2 max-h-[55vh] overflow-y-auto">
                 {columnCards.map((card) => {
                   // Servidor já mascara: content null = card oculto
-                  const isHidden = card.content === null;
-                  const isMine = !isHidden && card.author === nicknameRef.current;
+                  // O servidor só manda o texto de quem pode ver.
+                  const isHidden = card.content === undefined;
+                  const isMine = card.isMine;
                   const isRevealed = room.revealedColumns.includes(col.key);
                   const canEdit = isMine && !isRevealed && room.phase !== "done";
                   const isEditing = editingCard?.id === card.id;
